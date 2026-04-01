@@ -350,7 +350,7 @@ class TikTokScanner:
         # Bio-link pivot: search for any extracted handles (notably IG handle).
         try:
             social = self.parse_social_usernames(bio or "")
-            for k in ("instagram", "x", "github", "snapchat"):
+            for k in ("instagram", "x", "github", "snapchat", "youtube"):
                 for h in (social.get(k) or []):
                     if h and h not in queries:
                         queries.append(h)
@@ -1655,7 +1655,7 @@ class TikTokScanner:
         base = (unique_id or "").strip().lstrip("@").lower()
         found = self.parse_social_usernames(signature or "")
         candidates: List[str] = []
-        for k in ("instagram", "x", "github", "snapchat"):
+        for k in ("instagram", "x", "github", "snapchat", "youtube"):
             candidates.extend(found.get(k) or [])
         candidates.extend(self._extract_mentions(signature or ""))
 
@@ -1680,13 +1680,19 @@ class TikTokScanner:
         """
         text = (signature or "").strip()
         if not text:
-            return {"instagram": [], "snapchat": [], "github": [], "x": []}
+            return {"instagram": [], "snapchat": [], "github": [], "x": [], "youtube": []}
+
+        # Instagram profile URLs (exclude /p/, /reel/, etc.)
+        _ig_url = r"(?:https?://)?(?:www\.)?instagram\.com/(?!p/|reel/|reels/|stories/|explore/|accounts/)([A-Za-z0-9._]{1,30})/?"
+        _x_url = r"(?:https?://)?(?:www\.)?(?:x\.com|twitter\.com)/([A-Za-z0-9_]{1,30})/?"
+        _yt_url = r"(?:https?://)?(?:www\.)?youtube\.com/(?:@|c/|channel/|user/)([A-Za-z0-9._-]{1,100})/?"
 
         patterns = {
             "instagram": [
                 r"\big\s*[-:]\s*@?([A-Za-z0-9._]{1,30})\b",
                 r"\binsta\s*[-:]\s*@?([A-Za-z0-9._]{1,30})\b",
                 r"\binstagram\s*[-:]\s*@?([A-Za-z0-9._]{1,30})\b",
+                _ig_url,
             ],
             "snapchat": [
                 r"\bsc\s*[-:]\s*@?([A-Za-z0-9._-]{1,30})\b",
@@ -1696,15 +1702,21 @@ class TikTokScanner:
             "github": [
                 r"\bgh\s*[-:]\s*@?([A-Za-z0-9-]{1,39})\b",
                 r"\bgithub\s*[-:]\s*@?([A-Za-z0-9-]{1,39})\b",
+                r"(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9-]{1,39})/?",
             ],
             "x": [
-                r"\bx\s*[-:]\s*@?([A-Za-z0-9_]{1,15})\b",
-                r"\btwitter\s*[-:]\s*@?([A-Za-z0-9_]{1,15})\b",
-                r"\b(?:x\.com|twitter\.com)\/([A-Za-z0-9_]{1,15})\b",
+                r"\bx\s*[-:]\s*@?([A-Za-z0-9_]{1,30})\b",
+                r"\btwitter\s*[-:]\s*@?([A-Za-z0-9_]{1,30})\b",
+                _x_url,
+            ],
+            "youtube": [
+                r"\byt\s*[-:]\s*@?([A-Za-z0-9._-]{1,100})\b",
+                r"\byoutube\s*[-:]\s*@?([A-Za-z0-9._-]{1,100})\b",
+                _yt_url,
             ],
         }
 
-        out: Dict[str, List[str]] = {"instagram": [], "snapchat": [], "github": [], "x": []}
+        out: Dict[str, List[str]] = {"instagram": [], "snapchat": [], "github": [], "x": [], "youtube": []}
         for platform, pats in patterns.items():
             seen = set()
             for pat in pats:

@@ -85,14 +85,17 @@ def build_forensic_report(
     found = scanner.parse_social_usernames(signature)
     ig_handles = found.get("instagram") or []
     x_handles = found.get("x") or []
+    youtube_handles = found.get("youtube") or []
     github_handles = set(found.get("github") or [])
     alternate_ids = scanner.extract_alternate_identities(signature, unique_id)
 
+    # Merge every username that was probed (including TikTok uniqueId). Previously only
+    # ig/x/alternate handles were considered, so Instagram/X hits for the primary
+    # @handle were dropped even though sherlock probed them.
     best_by_platform: Dict[str, LeadResult] = {}
-    lead_handles = [*ig_handles, *x_handles, *alternate_ids]
-    for handle in lead_handles:
-        for res in leads.get(handle) or []:
-            if res.platform not in {"Instagram", "X", "YouTube", "Pinterest"}:
+    for _probe_user, res_list in (leads or {}).items():
+        for res in res_list:
+            if res.platform not in {"Instagram", "X", "YouTube", "Pinterest", "GitHub"}:
                 continue
             prev = best_by_platform.get(res.platform)
             if prev is None:
@@ -102,7 +105,7 @@ def build_forensic_report(
 
     social_leads: List[Dict[str, Any]] = []
     seen_urls: Set[str] = set()
-    for p in ["Instagram", "X", "YouTube", "Pinterest"]:
+    for p in ["Instagram", "X", "YouTube", "Pinterest", "GitHub"]:
         if p not in best_by_platform:
             continue
         r = best_by_platform[p]
@@ -112,6 +115,40 @@ def build_forensic_report(
         social_leads.append(
             {"platform": p, "url": r.url, "status": r.status, "http_status": r.http_status, "queried_username": r.username}
         )
+
+    def _bio_fallback(platform: str, url: str, handle: str) -> None:
+        if url in seen_urls:
+            return
+        if any(s.get("platform") == platform for s in social_leads):
+            return
+        seen_urls.add(url)
+        social_leads.append(
+            {
+                "platform": platform,
+                "url": url,
+                "status": "From bio",
+                "http_status": None,
+                "queried_username": handle,
+                "source": "bio_parse",
+            }
+        )
+
+    for h in ig_handles:
+        hn = (h or "").strip().lstrip("@")
+        if hn:
+            _bio_fallback("Instagram", f"https://www.instagram.com/{hn}/", hn)
+    for h in x_handles:
+        hn = (h or "").strip().lstrip("@")
+        if hn:
+            _bio_fallback("X", f"https://x.com/{hn}", hn)
+    for h in youtube_handles:
+        hn = (h or "").strip().lstrip("@")
+        if hn:
+            _bio_fallback("YouTube", f"https://www.youtube.com/@{hn}", hn)
+    for h in github_handles:
+        hn = (h or "").strip().lstrip("@")
+        if hn:
+            _bio_fallback("GitHub", f"https://github.com/{hn}", hn)
 
     if isinstance(id_forensics, dict) and id_forensics.get("decoded"):
         slot_reserved = id_forensics.get("timestamp_utc") or "(unknown)"
@@ -260,6 +297,7 @@ def build_forensic_report(
         "bio_parsed_handles": {
             "instagram": ig_handles,
             "x": x_handles,
+            "youtube": youtube_handles,
             "github": list(github_handles),
             "snapchat": found.get("snapchat") or [],
         },
@@ -536,15 +574,17 @@ async def run_full_investigation(
     found = scanner.parse_social_usernames(signature)
     ig_handles = found.get("instagram") or []
     x_handles = found.get("x") or []
+    youtube_handles = found.get("youtube") or []
     github_handles = set(found.get("github") or [])
     alternate_ids = scanner.extract_alternate_identities(signature, unique_id)
-    pivot_candidates = [unique_id, *ig_handles, *x_handles, *alternate_ids]
+    pivot_candidates = [unique_id, *ig_handles, *x_handles, *youtube_handles, *alternate_ids]
     prioritize_ig = (found.get("instagram") or [None])[0]
+    deep_links = set(alternate_ids) | {h.strip().lstrip("@") for h in youtube_handles if h}
     leads = await sherlock_search(
         pivot_candidates,
         prioritize_instagram=prioritize_ig,
         github_usernames=github_handles,
-        deep_link_usernames=set(alternate_ids),
+        deep_link_usernames=deep_links,
     )
 
     evidence_dir = eroot / unique_id
