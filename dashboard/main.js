@@ -79,7 +79,10 @@
   function renderReport(data, httpStatus) {
     const missing = data.status === "missing" || httpStatus === 404;
     if (missing) {
+      results.classList.remove("lupin-results-enter");
       results.innerHTML = section("Result", `<p class="text-neutral-400 text-sm">${esc(data.error || "Not found")}</p>`);
+      void results.offsetWidth;
+      results.classList.add("lupin-results-enter");
       raw.textContent = JSON.stringify(data, null, 2);
       rawbox.classList.remove("hidden");
       return;
@@ -91,7 +94,6 @@
     const inf = data.infrastructure || {};
     const intel = data.intelligence || {};
     const interp = data.intelligence_interpretation || {};
-    const pol = data.pattern_of_life || {};
     const sec = data.secret_stats || {};
     const ev = data.evidence || {};
 
@@ -202,65 +204,6 @@
     }
     if (sec.ai_tags_present) secretRows.push(["ai_tags_present", "true"]);
 
-    const ac = pol.activity_clock || {};
-    const hist = ac.utc_hour_histogram;
-    let clockHtml = "";
-    if (Array.isArray(hist) && hist.length === 24) {
-      const mx = Math.max(1, ...hist);
-      const total = hist.reduce((a, b) => a + (Number(b) || 0), 0);
-      let peakH = 0;
-      let peakN = -1;
-      hist.forEach((n, i) => {
-        const v = Number(n) || 0;
-        if (v > peakN) {
-          peakN = v;
-          peakH = i;
-        }
-      });
-      const barRow = hist
-        .map((n, hour) => {
-          const v = Number(n) || 0;
-          const pct = mx ? Math.round((v / mx) * 100) : 0;
-          const h = Math.max(v > 0 ? 8 : 4, pct);
-          const bg = v > 0 ? "rgb(255 255 255)" : "rgb(64 64 64)";
-          const op = v > 0 ? 1 : 0.4;
-          const tip = `UTC ${hour}:00 · ${v} post${v === 1 ? "" : "s"}`;
-          return `<div class="flex-1 min-w-0 flex flex-col items-center justify-end group relative" title="${esc(tip)}">
-            <div class="w-full max-w-[10px] mx-auto rounded-sm transition-opacity group-hover:opacity-100" style="height:${h}%;background:${bg};opacity:${op}"></div>
-          </div>`;
-        })
-        .join("");
-      const ticks = [0, 6, 12, 18, 23]
-        .map((h) => {
-          const pos = (h / 23) * 100;
-          return `<span class="absolute text-[9px] font-mono text-neutral-600 whitespace-nowrap" style="left:${pos}%;transform:translateX(-50%)">${h}</span>`;
-        })
-        .join("");
-      clockHtml = `<div class="mt-2 space-y-1">
-        <div class="flex justify-between text-[10px] font-mono text-neutral-500">
-          <span>Posts by hour (UTC)</span>
-          <span>${total} total · peak ${peakH}:00 (${peakN})</span>
-        </div>
-        <div class="relative h-24 flex items-end gap-px pt-4 pb-1 border-b border-neutral-800">
-          ${barRow}
-        </div>
-        <div class="relative h-4 mt-0.5">${ticks}</div>
-        <p class="text-[10px] text-neutral-600 font-mono leading-relaxed">${esc(ac.deduction || "")}</p>
-        ${
-          ac.geographic_suggestion
-            ? `<p class="text-[11px] text-neutral-300 mt-3 rounded border border-neutral-800 bg-neutral-950/80 px-3 py-2 font-mono leading-relaxed">${esc(ac.geographic_suggestion)}</p>`
-            : ""
-        }
-        ${
-          ac.clock_face
-            ? `<p class="text-[10px] text-neutral-500 font-mono mt-2 border-t border-neutral-900 pt-2">${esc(ac.clock_face)}</p>`
-            : ""
-        }
-      </div>`;
-    } else {
-      clockHtml = `<p class="text-xs text-neutral-600 font-mono">${esc(ac.clock_face || "No histogram")}</p>`;
-    }
-
     const leads = intel.social_leads || [];
     const leadHtml = leads.length
       ? `<ul class="space-y-2">
@@ -317,6 +260,7 @@
         `<ul class="text-xs text-neutral-400 space-y-2">${mesh.map((m) => `<li>@${esc(m.video_author)}: ${esc((m.shared_social_leads || []).join(", "))}</li>`).join("")}</ul>`
       );
 
+    results.classList.remove("lupin-results-enter");
     results.innerHTML = [
       section("Overview", hero),
       section("Counts", statsHtml),
@@ -326,12 +270,13 @@
       section("Infrastructure", dl(infraRows)),
       section("Bio", bio || `<p class="text-neutral-600 text-sm">—</p>`),
       section("Social leads", leadHtml),
-      section("Pattern of life", clockHtml),
       secretRows.length ? section("Secret stats", dl(secretRows.map(([k, v]) => [k, v]))) : "",
       extra,
     ]
       .filter(Boolean)
       .join("");
+    void results.offsetWidth;
+    results.classList.add("lupin-results-enter");
 
     raw.textContent = JSON.stringify(data, null, 2);
     rawbox.classList.remove("hidden");
@@ -351,15 +296,28 @@
     throw new Error("Timed out waiting for results.");
   }
 
+  const LOADING_STEPS = ["Queued", "Fetching profile", "Cross-platform probes", "Compiling report"];
+
   async function runScan(username) {
     const u = username.trim().replace(/^@+/g, "");
     if (!u) return;
     err.classList.add("hidden");
+    err.classList.remove("lupin-err-animate");
     results.classList.add("hidden");
     rawbox.classList.add("hidden");
     loading.classList.remove("hidden");
+    form.classList.add("lupin-form-active");
+    btn.classList.add("lupin-btn-busy");
     btn.disabled = true;
     q.disabled = true;
+
+    const loadingMsg = document.getElementById("loading-msg");
+    let stepIx = 0;
+    if (loadingMsg) loadingMsg.textContent = `${LOADING_STEPS[0]}…`;
+    const loadingTick = window.setInterval(() => {
+      stepIx = (stepIx + 1) % LOADING_STEPS.length;
+      if (loadingMsg) loadingMsg.textContent = `${LOADING_STEPS[stepIx]}…`;
+    }, 1200);
 
     try {
       const res = await fetch(`${API_BASE}/api/investigate/${encodeURIComponent(u)}`, {
@@ -379,8 +337,14 @@
     } catch (e) {
       err.textContent = e.message || String(e);
       err.classList.remove("hidden");
+      void err.offsetWidth;
+      err.classList.add("lupin-err-animate");
+      window.setTimeout(() => err.classList.remove("lupin-err-animate"), 500);
     } finally {
+      window.clearInterval(loadingTick);
       loading.classList.add("hidden");
+      form.classList.remove("lupin-form-active");
+      btn.classList.remove("lupin-btn-busy");
       btn.disabled = false;
       q.disabled = false;
     }

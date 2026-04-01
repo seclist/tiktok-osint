@@ -18,6 +18,107 @@
         },
       };
     </script>
+    <style>
+      @keyframes lupin-eq {
+        0%,
+        100% {
+          transform: scaleY(0.35);
+          opacity: 0.35;
+        }
+        50% {
+          transform: scaleY(1);
+          opacity: 1;
+        }
+      }
+      @keyframes lupin-fade-up {
+        from {
+          opacity: 0;
+          transform: translateY(14px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      @keyframes lupin-shimmer {
+        0% {
+          background-position: 200% 0;
+        }
+        100% {
+          background-position: -200% 0;
+        }
+      }
+      @keyframes lupin-err {
+        0%,
+        100% {
+          transform: translateX(0);
+        }
+        20% {
+          transform: translateX(-6px);
+        }
+        40% {
+          transform: translateX(6px);
+        }
+        60% {
+          transform: translateX(-4px);
+        }
+        80% {
+          transform: translateX(4px);
+        }
+      }
+      .lupin-bar {
+        display: block;
+        width: 5px;
+        height: 2.5rem;
+        border-radius: 1px;
+        background: linear-gradient(180deg, #fff 0%, #a3a3a3 100%);
+        transform-origin: bottom;
+        animation: lupin-eq 0.85s ease-in-out infinite;
+      }
+      .lupin-bar:nth-child(2) {
+        animation-delay: 0.12s;
+      }
+      .lupin-bar:nth-child(3) {
+        animation-delay: 0.24s;
+      }
+      .lupin-results-enter {
+        animation: lupin-fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+      }
+      .lupin-btn-busy {
+        position: relative;
+        overflow: hidden;
+      }
+      .lupin-btn-busy::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          105deg,
+          transparent 40%,
+          rgba(255, 255, 255, 0.45) 50%,
+          transparent 60%
+        );
+        background-size: 200% 100%;
+        animation: lupin-shimmer 1.4s ease-in-out infinite;
+      }
+      .lupin-form-active {
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+        transition: box-shadow 0.35s ease;
+      }
+      .lupin-err-animate {
+        animation: lupin-err 0.45s ease;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .lupin-bar,
+        .lupin-results-enter,
+        .lupin-btn-busy::after {
+          animation: none !important;
+        }
+        .lupin-err-animate {
+          animation: none !important;
+        }
+      }
+    </style>
   </head>
   <body class="min-h-screen bg-black text-white antialiased">
     <div class="max-w-2xl mx-auto px-5 py-16 md:py-24">
@@ -26,31 +127,49 @@
         <p class="mt-1 text-sm text-neutral-500">Forensic profile lookup</p>
       </header>
 
-      <form id="form" class="flex flex-col sm:flex-row gap-3 sm:gap-0 border-b border-neutral-700 pb-3">
+      <form
+        id="form"
+        class="flex flex-col sm:flex-row gap-3 sm:gap-0 border-b border-neutral-700 pb-3 transition-shadow duration-300"
+      >
         <input
           id="q"
           type="text"
           autocomplete="off"
           spellcheck="false"
           placeholder="username"
-          class="flex-1 bg-transparent text-white placeholder:text-neutral-600 outline-none text-base font-mono"
+          class="flex-1 bg-transparent text-white placeholder:text-neutral-600 outline-none text-base font-mono transition-opacity duration-300"
         />
         <button
           type="submit"
           id="btn"
-          class="shrink-0 text-xs uppercase tracking-[0.2em] text-black bg-white px-6 py-3 hover:bg-neutral-200 transition-colors"
+          class="relative shrink-0 text-xs uppercase tracking-[0.2em] text-black bg-white px-6 py-3 hover:bg-neutral-200 transition-all duration-300 hover:shadow-[0_0_24px_rgba(255,255,255,0.15)] disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:shadow-none"
         >
           Search
         </button>
       </form>
 
-      <p id="loading" class="hidden mt-8 text-sm text-neutral-500 font-mono">Running scan…</p>
+      <div id="loading" class="hidden mt-10" aria-live="polite">
+        <div class="flex flex-col sm:flex-row sm:items-center gap-6">
+          <div class="flex items-end gap-1.5 h-11" aria-hidden="true">
+            <span class="lupin-bar"></span>
+            <span class="lupin-bar"></span>
+            <span class="lupin-bar"></span>
+          </div>
+          <div class="min-w-0">
+            <p id="loading-msg" class="text-sm font-mono text-neutral-200 tracking-tight">Running scan…</p>
+            <p class="text-xs text-neutral-600 font-mono mt-2 leading-relaxed">
+              Cross-checking profile, pivots, and report fields
+            </p>
+          </div>
+        </div>
+      </div>
+
       <p id="err" class="hidden mt-8 text-sm text-neutral-400 border-l-2 border-white pl-4"></p>
 
       <article id="results" class="hidden mt-14 space-y-14"></article>
 
       <details id="rawbox" class="hidden mt-16 border-t border-neutral-800 pt-10">
-        <summary class="cursor-pointer text-xs uppercase tracking-widest text-neutral-500 hover:text-neutral-300">
+        <summary class="cursor-pointer text-xs uppercase tracking-widest text-neutral-500 hover:text-neutral-300 transition-colors">
           Raw JSON
         </summary>
         <pre

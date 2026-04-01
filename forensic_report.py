@@ -316,16 +316,6 @@ def build_forensic_report(
             date_str = fmt.split(" ")[0] if fmt else None
         discovered.append(f"{date_str or '(date?)'} - {url}")
 
-    video_clock_ts: List[Any] = []
-    for v in tagged:
-        ct = v.get("video_create_time")
-        if ct is not None:
-            video_clock_ts.append(ct)
-
-    slot_for_clock = slot_reserved if slot_reserved != "(unknown)" else None
-    created_for_clock = created if created != "(unknown)" else None
-    activity_clock = scanner.generate_activity_clock(slot_for_clock, created_for_clock, video_clock_ts)
-
     summary_bits: List[str] = []
     if integrity and integrity != "(unknown)":
         summary_bits.append(integrity)
@@ -427,22 +417,6 @@ def build_forensic_report(
         "discovered_interactions": discovered[:15],
         "interaction_leads": interactions,
         "duetters": shadow.get("duetters") or [],
-    }
-
-    secret_stats_out = dict(secret) if isinstance(secret, dict) else {}
-
-    pattern_of_life = {
-        "video_count_observed": video_count_observed,
-        "engagement_to_follower_ratio": pol.get("engagement_to_follower_ratio"),
-        "content_status": content_status,
-        "activity_clock": {
-            "utc_hour_histogram": activity_clock.get("utc_hour_histogram"),
-            "clock_face": activity_clock.get("clock_face"),
-            "clock_ruler": activity_clock.get("clock_ruler"),
-            "deduction": activity_clock.get("deduction"),
-            "inferred_timezone_offset_hours": activity_clock.get("inferred_timezone_offset_hours"),
-            "geographic_suggestion": activity_clock.get("geographic_suggestion"),
-        },
         "shadow_tracker": {
             "tagged_videos": tagged,
             "interaction_events": shadow.get("interaction_events") or [],
@@ -452,6 +426,8 @@ def build_forensic_report(
             "duetters": shadow.get("duetters") or [],
         },
     }
+
+    secret_stats_out = dict(secret) if isinstance(secret, dict) else {}
 
     evidence = {
         "avatar_local_path": evidence_paths.get("avatar") if evidence_paths else (saved_avatar.as_posix() if saved_avatar else None),
@@ -477,7 +453,6 @@ def build_forensic_report(
         "intelligence": intelligence,
         "intelligence_interpretation": intelligence_interpretation,
         "secret_stats": secret_stats_out,
-        "pattern_of_life": pattern_of_life,
         "stats": stats_block,
         "evidence": evidence,
     }
@@ -489,7 +464,6 @@ def format_report_text(report: Dict[str, Any], *, verify: bool = False, verify_m
     identity = report.get("identity") or {}
     infra = report.get("infrastructure") or {}
     intel = report.get("intelligence") or {}
-    pol = report.get("pattern_of_life") or {}
     stats = report.get("stats") or {}
     secret = report.get("secret_stats") or {}
     ev = report.get("evidence") or {}
@@ -621,22 +595,6 @@ def format_report_text(report: Dict[str, Any], *, verify: bool = False, verify_m
     host_av = ev.get("avatar_url")
     if host_av:
         lines.extend(["", f"Hosted Avatar URL: {host_av}"])
-
-    ac = (pol.get("activity_clock") or {})
-    if ac.get("clock_face"):
-        lines.extend(
-            [
-                "",
-                "Pattern of Life Clock (24h UTC)",
-                "",
-                ac.get("clock_ruler", ""),
-                ac["clock_face"],
-            ]
-        )
-        if ac.get("deduction"):
-            lines.extend(["", f"Deduction: {ac['deduction']}"])
-        if ac.get("geographic_suggestion"):
-            lines.extend(["", f"Geographic suggestion: {ac['geographic_suggestion']}"])
 
     disc = intel.get("discovered_interactions") or []
     ileads = intel.get("interaction_leads") or []
