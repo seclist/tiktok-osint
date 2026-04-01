@@ -73,8 +73,12 @@ def build_forensic_report(
         geographic_anchor if geographic_anchor != "(unknown)" else None,
     )
     stats_v2 = profile.get("statsV2") or {}
-    follower_count = stats_v2.get("followerCount") or "(unknown)"
-    heart_count = stats_v2.get("heartCount") or "(unknown)"
+    stats_v2_raw: Dict[str, Any] = profile.get("statsV2_raw") if isinstance(profile.get("statsV2_raw"), dict) else {}
+    if not stats_v2_raw and isinstance(stats_v2, dict):
+        stats_v2_raw = dict(stats_v2)
+    account_details: Dict[str, Any] = profile.get("account_details") if isinstance(profile.get("account_details"), dict) else {}
+    follower_count = stats_v2.get("followerCount") or stats_v2_raw.get("followerCount") or "(unknown)"
+    heart_count = stats_v2.get("heartCount") or stats_v2_raw.get("heartCount") or "(unknown)"
     pol = (result.extracted_metadata or {}).get("pattern_of_life") or {}
     video_count_observed = int(pol.get("video_count_observed") or 0)
 
@@ -189,7 +193,11 @@ def build_forensic_report(
 
     stats_block: Dict[str, Any] = {
         "followers": follower_count,
+        "following": stats_v2.get("followingCount") or stats_v2_raw.get("followingCount"),
         "likes": heart_count,
+        "videos_on_profile": stats_v2.get("videoCount") or stats_v2_raw.get("videoCount"),
+        "friends": stats_v2.get("friendCount") or stats_v2_raw.get("friendCount"),
+        "diggs_total": stats_v2.get("diggCount") or stats_v2_raw.get("diggCount"),
         "content_status": content_status,
         "engagement_ratio": engagement_ratio if content_status == "Public" else None,
         "shadow_stats": (
@@ -197,6 +205,30 @@ def build_forensic_report(
             if content_status == "Private"
             else None
         ),
+    }
+
+    account: Dict[str, Any] = {
+        "profile_url": f"https://www.tiktok.com/@{unique_id}",
+        "verified": account_details.get("verified"),
+        "private_account": account_details.get("private_account"),
+        "bio_link_url": account_details.get("bio_link_url"),
+        "following_visibility": account_details.get("following_visibility"),
+        "ftc": account_details.get("ftc"),
+        "is_organization": account_details.get("is_organization"),
+        "show_favorite": account_details.get("show_favorite"),
+        "open_favorite": account_details.get("open_favorite"),
+        "user_level_privacy": {
+            k: v
+            for k, v in {
+                "comment_setting": account_details.get("comment_setting_user"),
+                "duet_setting": account_details.get("duet_setting_user"),
+                "stitch_setting": account_details.get("stitch_setting_user"),
+                "download_setting": account_details.get("download_setting_user"),
+            }.items()
+            if v is not None
+        },
+        "avatar_thumb_url": account_details.get("avatar_thumb"),
+        "stats_v2_raw": stats_v2_raw,
     }
 
     identity = {
@@ -223,6 +255,7 @@ def build_forensic_report(
 
     intelligence = {
         "bio": signature,
+        "bio_link_url": account_details.get("bio_link_url"),
         "avatar_url": avatar,
         "bio_parsed_handles": {
             "instagram": ig_handles,
@@ -273,6 +306,7 @@ def build_forensic_report(
         "status": "complete",
         "username_requested": result.username,
         "forensic_summary": summary_bits,
+        "account": account,
         "identity": identity,
         "infrastructure": infrastructure,
         "intelligence": intelligence,
@@ -300,20 +334,35 @@ def format_report_text(report: Dict[str, Any], *, verify: bool = False, verify_m
         "",
         "- " + "; ".join(report.get("forensic_summary") or []),
         "",
-        "Identity Details",
+        "Account",
         "",
-        f"Numeric ID: {identity.get('numeric_id')}",
-        "",
-        f"Slot Reserved: {identity.get('slot_reserved_utc')} UTC",
-        "",
-        f"Profile Finalized: {identity.get('profile_finalized_utc')} UTC",
-        "",
-        f"Region/Lang: {identity.get('registered_region')} / {identity.get('primary_language')}",
-        "",
-        "Server Anchor: "
-        + str(infra.get("server_anchor") or "(unknown)")
-        + (f" ({infra.get('region_spoofing_flag')})" if infra.get("region_spoofing_flag") else ""),
     ]
+    acc = report.get("account") or {}
+    lines.extend(
+        [
+            f"Profile URL: {acc.get('profile_url')}",
+            f"Verified: {acc.get('verified')}  Private: {acc.get('private_account')}",
+            f"Bio link: {acc.get('bio_link_url') or intel.get('bio_link_url') or ''}",
+        ]
+    )
+    lines.extend(
+        [
+            "",
+            "Identity Details",
+            "",
+            f"Numeric ID: {identity.get('numeric_id')}",
+            "",
+            f"Slot Reserved: {identity.get('slot_reserved_utc')} UTC",
+            "",
+            f"Profile Finalized: {identity.get('profile_finalized_utc')} UTC",
+            "",
+            f"Region/Lang: {identity.get('registered_region')} / {identity.get('primary_language')}",
+            "",
+            "Server Anchor: "
+            + str(infra.get("server_anchor") or "(unknown)")
+            + (f" ({infra.get('region_spoofing_flag')})" if infra.get("region_spoofing_flag") else ""),
+        ]
+    )
     pdc = infra.get("physical_datacenter")
     if isinstance(pdc, str) and pdc.strip():
         lines.extend(["", pdc.strip()])
@@ -415,7 +464,15 @@ def format_report_text(report: Dict[str, Any], *, verify: bool = False, verify_m
             lines.append("")
             lines.append("Interaction Leads: " + ", ".join(ileads))
 
-    lines.extend(["", "Stats", "", f"Followers/Likes: {stats.get('followers')} / {stats.get('likes')}"])
+    lines.extend(
+        [
+            "",
+            "Stats",
+            "",
+            f"Followers/Following/Likes: {stats.get('followers')} / {stats.get('following')} / {stats.get('likes')}",
+            f"Videos on profile (counter): {stats.get('videos_on_profile')}",
+        ]
+    )
     if stats.get("content_status") == "Public":
         lines.extend(["", f"Engagement Ratio: {stats.get('engagement_ratio')}"])
     elif stats.get("content_status") == "Private" and stats.get("shadow_stats"):

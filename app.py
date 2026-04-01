@@ -42,7 +42,7 @@ _data = data_dir()
 _data.mkdir(parents=True, exist_ok=True)
 DEFAULT_DB = _data / "lupin.db"
 
-DEFAULT_TIMEOUT = int(os.environ.get("LUPIN_INVESTIGATE_TIMEOUT", "180"))
+DEFAULT_TIMEOUT = int(os.environ.get("LUPIN_INVESTIGATE_TIMEOUT", "120"))
 DEFAULT_WORKERS = int(os.environ.get("LUPIN_WORKERS", "2"))
 
 db = ReportDatabase(Path(os.environ.get("LUPIN_DB", str(DEFAULT_DB))))

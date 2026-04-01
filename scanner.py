@@ -88,7 +88,7 @@ class TikTokScanner:
     Note: this implementation intentionally avoids anti-bot bypass/evasion behavior.
     """
 
-    def __init__(self, timeout_ms: int = 30000, proxy_server: Optional[str] = None) -> None:
+    def __init__(self, timeout_ms: int = 26000, proxy_server: Optional[str] = None) -> None:
         self.timeout_ms = timeout_ms
         self._proxy_server = (proxy_server or "").strip() or None
         self._playwright: Optional[Playwright] = None
@@ -165,11 +165,11 @@ class TikTokScanner:
         profile_url = f"https://www.tiktok.com/@{username}"
         await page.goto(profile_url, wait_until="domcontentloaded", timeout=self.timeout_ms)
         self._visited_urls = [profile_url]
-        await page.wait_for_timeout(4000)
+        await page.wait_for_timeout(2000)
 
         # Trigger lazy-loading of videos and wait for item_list responses.
         await self._trigger_video_load(page)
-        await page.wait_for_timeout(3000)
+        await page.wait_for_timeout(1200)
 
         html = await page.content()
         rehydration_data = self._extract_rehydration_json(html)
@@ -185,7 +185,7 @@ class TikTokScanner:
             try:
                 await page.goto(video_url, wait_until="domcontentloaded", timeout=self.timeout_ms)
                 self._visited_urls.append(video_url)
-                await page.wait_for_timeout(8000)
+                await page.wait_for_timeout(4500)
             except Exception:
                 pass
 
@@ -221,11 +221,11 @@ class TikTokScanner:
                         unique_id=uid,
                         nickname=nickname,
                         bio=bio,
-                        max_comment_videos=3,
+                        max_comment_videos=2,
                         target_mesh_handles=target_mesh_handles,
                     )
                 )
-                metadata["shadow_tracker"] = await asyncio.wait_for(shadow_task, timeout=40)
+                metadata["shadow_tracker"] = await asyncio.wait_for(shadow_task, timeout=26)
             else:
                 metadata["shadow_tracker"] = {}
         except Exception:
@@ -252,12 +252,12 @@ class TikTokScanner:
         """
         try:
             # Scroll/wait loop until itemList becomes non-empty (best-effort).
-            for delta in (900, 1200, 1600, 2000):
+            for delta in (1000, 1600, 2200):
                 await page.mouse.wheel(0, delta)
-                await self._wait_for_post_item_list(page, timeout_ms=8000)
+                await self._wait_for_post_item_list(page, timeout_ms=5000)
                 if self._has_nonempty_post_item_list():
                     return
-                await page.wait_for_timeout(800)
+                await page.wait_for_timeout(450)
         except Exception:
             return
 
@@ -387,12 +387,12 @@ class TikTokScanner:
                 url = "https://www.tiktok.com/search?q=" + q.replace("#", "%23").replace(" ", "%20")
                 try:
                     await p.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
-                    await p.wait_for_timeout(1800)
+                    await p.wait_for_timeout(900)
                     try:
-                        await p.wait_for_response(lambda r: SEARCH_ITEM_FULL_PATH in r.url, timeout=10000)
+                        await p.wait_for_response(lambda r: SEARCH_ITEM_FULL_PATH in r.url, timeout=6000)
                     except Exception:
                         pass
-                    await p.wait_for_timeout(1200)
+                    await p.wait_for_timeout(600)
                 except Exception:
                     return []
                 return self._extract_search_videos(
@@ -400,7 +400,7 @@ class TikTokScanner:
                 )
 
             # Universal use: for shadow mode we only need handle + nickname + key bio handles.
-            search_tasks = [asyncio.create_task(run_search(q)) for q in uniq_queries[:5]]
+            search_tasks = [asyncio.create_task(run_search(q)) for q in uniq_queries[:3]]
             search_results_lists = await asyncio.gather(*search_tasks, return_exceptions=True)
         finally:
             for p in search_pages:
@@ -441,7 +441,7 @@ class TikTokScanner:
             seen.add(key)
             deduped.append(h)
 
-        tagged_videos = deduped[:10]
+        tagged_videos = deduped[:6]
 
         # Interaction Leads (Search): quoted query yields duet/stitch ecosystem (best-effort)
         duetters: Set[str] = set()
@@ -474,12 +474,12 @@ class TikTokScanner:
             before = len(self._api_results.get("comment_list") or [])
             try:
                 await p.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
-                await p.wait_for_timeout(1800)
+                await p.wait_for_timeout(1000)
                 try:
-                    await p.wait_for_response(lambda r: COMMENT_LIST_PATH in r.url, timeout=12000)
+                    await p.wait_for_response(lambda r: COMMENT_LIST_PATH in r.url, timeout=7000)
                 except Exception:
                     pass
-                await p.wait_for_timeout(1500)
+                await p.wait_for_timeout(800)
             except Exception:
                 return
             finally:
@@ -1299,6 +1299,13 @@ class TikTokScanner:
         create_time = user.get("createTime")
         modify_time = user.get("nickNameModifyTime")
 
+        bio_link_url: Optional[str] = None
+        bl = user.get("bioLink") or user.get("bio_link")
+        if isinstance(bl, dict):
+            bio_link_url = bl.get("link") or bl.get("url") or bl.get("riskUrl")
+
+        stats_flat: Dict[str, Any] = dict(stats_v2) if isinstance(stats_v2, dict) else {}
+
         profile: Dict[str, Any] = {
             "nickname": user.get("nickname"),
             "uniqueId": user.get("uniqueId"),
@@ -1309,8 +1316,28 @@ class TikTokScanner:
             "account_created": self._format_utc_timestamp(create_time),
             "last_profile_update": self._format_utc_timestamp(modify_time),
             "statsV2": {
-                "followerCount": stats_v2.get("followerCount"),
-                "heartCount": stats_v2.get("heartCount"),
+                "followerCount": stats_flat.get("followerCount"),
+                "followingCount": stats_flat.get("followingCount"),
+                "heartCount": stats_flat.get("heartCount"),
+                "videoCount": stats_flat.get("videoCount"),
+                "friendCount": stats_flat.get("friendCount"),
+                "diggCount": stats_flat.get("diggCount"),
+            },
+            "statsV2_raw": stats_flat,
+            "account_details": {
+                "verified": user.get("verified"),
+                "private_account": user.get("secret"),
+                "following_visibility": user.get("followingVisibility"),
+                "show_favorite": user.get("showFavorite"),
+                "open_favorite": user.get("openFavorite"),
+                "ftc": user.get("ftc"),
+                "is_organization": user.get("isOrganization"),
+                "bio_link_url": bio_link_url,
+                "avatar_thumb": user.get("avatarThumb") or user.get("avatarMedium"),
+                "comment_setting_user": user.get("commentSetting"),
+                "duet_setting_user": user.get("duetSetting"),
+                "stitch_setting_user": user.get("stitchSetting"),
+                "download_setting_user": user.get("downloadSetting"),
             },
         }
         # ID forensics: decode the numeric user id into timestamp + internal shard.
@@ -1449,7 +1476,7 @@ class TikTokScanner:
                 wait_until="domcontentloaded",
                 timeout=self.timeout_ms,
             )
-            await page.wait_for_timeout(1200)
+            await page.wait_for_timeout(700)
             html = await page.content()
         except Exception:
             return None

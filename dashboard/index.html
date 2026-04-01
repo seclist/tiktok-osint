@@ -1,297 +1,65 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Default forensic API when the UI is opened via Live Server (:5500) or another static server -->
     <meta name="lupin-api-origin" content="http://127.0.0.1:8080" />
-    <title>Lupin Logic — OSINT Forensic Console</title>
+    <title>TikTok OSINT</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
-        darkMode: "class",
         theme: {
           extend: {
             fontFamily: {
-              mono: ["JetBrains Mono", "ui-monospace", "monospace"],
-              sans: ["Inter", "system-ui", "sans-serif"],
-            },
-            colors: {
-              lupin: {
-                bg: "#020617",
-                panel: "#0f172a",
-                border: "#1e293b",
-                accent: "#10b981",
-                glow: "#34d399",
-              },
-            },
-            animation: {
-              shimmer: "shimmer 2s linear infinite",
-              pulseSlow: "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
-            },
-            keyframes: {
-              shimmer: {
-                "0%": { backgroundPosition: "-200% 0" },
-                "100%": { backgroundPosition: "200% 0" },
-              },
+              sans: ["system-ui", "-apple-system", "Segoe UI", "sans-serif"],
+              mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
             },
           },
         },
       };
     </script>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
-      rel="stylesheet"
-    />
-    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-    <style>
-      body {
-        background: radial-gradient(ellipse 120% 80% at 50% -20%, rgba(16, 185, 129, 0.08), transparent),
-          #020617;
-      }
-      .scanlines {
-        pointer-events: none;
-        background: repeating-linear-gradient(
-          0deg,
-          transparent,
-          transparent 2px,
-          rgba(15, 23, 42, 0.12) 2px,
-          rgba(15, 23, 42, 0.12) 4px
-        );
-      }
-      .glow-border {
-        box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.15), 0 0 24px -8px rgba(16, 185, 129, 0.25);
-      }
-      .progress-indeterminate {
-        background: linear-gradient(
-          90deg,
-          transparent,
-          rgba(16, 185, 129, 0.5),
-          rgba(52, 211, 153, 0.8),
-          rgba(16, 185, 129, 0.5),
-          transparent
-        );
-        background-size: 200% 100%;
-        animation: shimmer 1.5s ease-in-out infinite;
-      }
-    </style>
   </head>
-  <body class="min-h-screen text-zinc-100 font-sans antialiased relative">
-    <div class="fixed inset-0 scanlines z-[5] opacity-40"></div>
+  <body class="min-h-screen bg-black text-white antialiased">
+    <div class="max-w-2xl mx-auto px-5 py-16 md:py-24">
+      <header class="mb-14">
+        <h1 class="text-2xl font-light tracking-tight text-white">TikTok OSINT</h1>
+        <p class="mt-1 text-sm text-neutral-500">Forensic profile lookup</p>
+      </header>
 
-    <!-- Header -->
-    <header
-      class="relative z-10 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0"
-    >
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-5">
-        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div class="flex items-center gap-3">
-            <div
-              class="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10 border border-emerald-500/30 glow-border"
-            >
-              <i data-lucide="radar" class="h-5 w-5 text-emerald-400"></i>
-            </div>
-            <div>
-              <h1 class="text-lg font-semibold tracking-tight text-white">Lupin Logic</h1>
-              <p class="text-xs text-zinc-500 font-mono uppercase tracking-widest">Forensic OSINT Console</p>
-            </div>
-          </div>
-          <form id="scan-form" class="flex flex-1 sm:flex-initial sm:min-w-[420px] gap-2">
-            <div class="relative flex-1">
-              <i
-                data-lucide="at-sign"
-                class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500"
-              ></i>
-              <input
-                id="username-input"
-                type="text"
-                placeholder="TikTok username (no @)"
-                autocomplete="off"
-                spellcheck="false"
-                class="w-full rounded-lg border border-slate-700 bg-slate-900/90 pl-10 pr-4 py-2.5 text-sm text-white placeholder:text-zinc-600 focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/40 font-mono"
-              />
-            </div>
-            <button
-              type="submit"
-              id="scan-btn"
-              class="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-slate-950 hover:bg-emerald-500 transition-colors shrink-0"
-            >
-              <i data-lucide="crosshair" class="h-4 w-4"></i>
-              Scan Target
-            </button>
-          </form>
-        </div>
-      </div>
-    </header>
-
-    <!-- Loading overlay -->
-    <div
-      id="loading-overlay"
-      class="fixed inset-0 z-50 hidden flex-col items-center justify-center bg-slate-950/92 backdrop-blur-sm"
-    >
-      <div class="w-full max-w-md px-6">
-        <div class="flex items-center justify-center gap-3 mb-6">
-          <i data-lucide="lock" class="h-8 w-8 text-emerald-400 animate-pulse"></i>
-          <div>
-            <p class="text-sm font-mono text-emerald-400/90 tracking-wide">Decrypting Metadata…</p>
-            <p class="text-xs text-zinc-500 mt-0.5">Queued job • polling forensic workers</p>
-          </div>
-        </div>
-        <div class="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
-          <div id="loading-bar" class="h-full w-1/3 rounded-full progress-indeterminate"></div>
-        </div>
-        <p id="loading-status" class="text-center text-xs text-zinc-500 font-mono mt-4">Initializing…</p>
-      </div>
-    </div>
-
-    <!-- Empty state -->
-    <div id="empty-state" class="relative z-10 max-w-7xl mx-auto px-4 py-20 text-center">
-      <i data-lucide="fingerprint" class="h-16 w-16 text-slate-700 mx-auto mb-4"></i>
-      <p class="text-zinc-500 text-sm max-w-md mx-auto">
-        Enter a TikTok handle and run <span class="text-emerald-500/80 font-mono">Scan Target</span> to pull
-        identity, infrastructure, and pattern-of-life intelligence from the Lupin API.
-      </p>
-    </div>
-
-    <!-- Results -->
-    <main id="results" class="relative z-10 hidden max-w-7xl mx-auto px-4 sm:px-6 py-8 pb-24">
-      <div id="error-banner" class="hidden mb-6 rounded-lg border border-red-500/30 bg-red-950/40 px-4 py-3 text-sm text-red-200"></div>
-
-      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <!-- Profile card (left) -->
-        <aside class="lg:col-span-4 space-y-4">
-          <div
-            class="rounded-xl border border-slate-800 bg-slate-900/50 p-6 glow-border"
-          >
-            <div class="flex flex-col items-center text-center">
-              <div
-                class="relative h-36 w-36 rounded-2xl overflow-hidden border-2 border-slate-700 bg-slate-800 ring-2 ring-emerald-500/20"
-              >
-                <img id="avatar-img" src="" alt="" class="h-full w-full object-cover hidden" />
-                <div
-                  id="avatar-placeholder"
-                  class="h-full w-full flex items-center justify-center text-slate-600"
-                >
-                  <i data-lucide="user" class="h-14 w-14"></i>
-                </div>
-              </div>
-              <h2 id="profile-nickname" class="mt-4 text-xl font-semibold text-white">—</h2>
-              <p id="profile-handle" class="text-sm text-emerald-500/80 font-mono">@—</p>
-              <p id="profile-numeric" class="mt-2 text-xs text-zinc-500 font-mono">ID —</p>
-              <div id="integrity-badge" class="mt-4 inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold">
-                <!-- filled by JS -->
-              </div>
-            </div>
-            <div class="mt-6 pt-6 border-t border-slate-800 space-y-2 text-xs font-mono text-zinc-400">
-              <div class="flex justify-between gap-2">
-                <span class="text-zinc-500">Region</span>
-                <span id="profile-region" class="text-zinc-300 text-right">—</span>
-              </div>
-              <div class="flex justify-between gap-2">
-                <span class="text-zinc-500">Language</span>
-                <span id="profile-lang" class="text-zinc-300 text-right">—</span>
-              </div>
-              <div class="flex justify-between gap-2">
-                <span class="text-zinc-500">Catalog</span>
-                <span id="profile-status" class="text-zinc-300 text-right">—</span>
-              </div>
-            </div>
-          </div>
-        </aside>
-
-        <!-- Forensic grid -->
-        <div class="lg:col-span-8 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <!-- Infrastructure -->
-          <div class="rounded-xl border border-slate-800 bg-slate-900/40 p-5 md:col-span-2">
-            <div class="flex items-center gap-2 mb-4">
-              <i data-lucide="map-pin" class="h-5 w-5 text-emerald-400"></i>
-              <h3 class="text-sm font-semibold uppercase tracking-wider text-zinc-400">Infrastructure</h3>
-            </div>
-            <div class="grid sm:grid-cols-2 gap-4">
-              <div>
-                <p class="text-xs text-zinc-500 mb-1">Physical datacenter</p>
-                <p id="infra-dc" class="text-sm text-zinc-200 leading-snug">—</p>
-              </div>
-              <div>
-                <p class="text-xs text-zinc-500 mb-1">Server anchor</p>
-                <p id="infra-anchor" class="text-xs text-zinc-200 font-mono leading-relaxed">—</p>
-              </div>
-              <div class="sm:col-span-2">
-                <p class="text-xs text-zinc-500 mb-1">IDC / flags</p>
-                <p id="infra-meta" class="text-xs text-zinc-400 font-mono">—</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- Intelligence leads -->
-          <div class="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
-            <div class="flex items-center gap-2 mb-4">
-              <i data-lucide="share-2" class="h-5 w-5 text-emerald-400"></i>
-              <h3 class="text-sm font-semibold uppercase tracking-wider text-zinc-400">Intelligence leads</h3>
-            </div>
-            <p id="intel-bio" class="text-xs text-zinc-500 mb-4 line-clamp-4 leading-relaxed">—</p>
-            <div id="social-leads" class="flex flex-wrap gap-2"></div>
-          </div>
-
-          <!-- Pattern of life -->
-          <div class="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
-            <div class="flex items-center gap-2 mb-2">
-              <i data-lucide="clock" class="h-5 w-5 text-emerald-400"></i>
-              <h3 class="text-sm font-semibold uppercase tracking-wider text-zinc-400">Pattern of life</h3>
-            </div>
-            <p id="pol-deduction" class="text-xs text-emerald-500/90 font-mono mb-4 min-h-[2.5rem]">—</p>
-            <div id="clock-container" class="space-y-3"></div>
-            <p class="text-[10px] text-zinc-600 font-mono mt-3" id="clock-ruler"></p>
-          </div>
-
-          <!-- Secret stats -->
-          <div class="rounded-xl border border-slate-800 bg-slate-900/40 p-5 md:col-span-2">
-            <div class="flex items-center justify-between mb-4">
-              <div class="flex items-center gap-2">
-                <i data-lucide="eye-off" class="h-5 w-5 text-emerald-400"></i>
-                <h3 class="text-sm font-semibold uppercase tracking-wider text-zinc-400">Secret stats</h3>
-              </div>
-              <button
-                type="button"
-                id="secret-toggle"
-                class="text-xs text-emerald-500 hover:text-emerald-400 font-mono flex items-center gap-1"
-              >
-                <i data-lucide="chevron-down" class="h-4 w-4" id="secret-chevron"></i>
-                <span>Expand</span>
-              </button>
-            </div>
-            <div id="secret-drawer" class="hidden grid sm:grid-cols-2 gap-3"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Raw JSON -->
-      <section class="mt-8 rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden">
+      <form id="form" class="flex flex-col sm:flex-row gap-3 sm:gap-0 border-b border-neutral-700 pb-3">
+        <input
+          id="q"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="username"
+          class="flex-1 bg-transparent text-white placeholder:text-neutral-600 outline-none text-base font-mono"
+        />
         <button
-          type="button"
-          id="raw-toggle"
-          class="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-slate-900/50 transition-colors"
+          type="submit"
+          id="btn"
+          class="shrink-0 text-xs uppercase tracking-[0.2em] text-black bg-white px-6 py-3 hover:bg-neutral-200 transition-colors"
         >
-          <span class="flex items-center gap-2 text-sm font-semibold text-zinc-300">
-            <i data-lucide="braces" class="h-4 w-4 text-emerald-500"></i>
-            Raw intelligence
-          </span>
-          <i data-lucide="chevron-down" class="h-5 w-5 text-zinc-500" id="raw-chevron"></i>
+          Search
         </button>
-        <div id="raw-panel" class="hidden border-t border-slate-800">
-          <pre
-            id="raw-json"
-            class="p-4 text-xs font-mono text-emerald-600/90 overflow-x-auto max-h-[480px] overflow-y-auto bg-slate-950"
-          ></pre>
-        </div>
-      </section>
-    </main>
+      </form>
+
+      <p id="loading" class="hidden mt-8 text-sm text-neutral-500 font-mono">Running scan…</p>
+      <p id="err" class="hidden mt-8 text-sm text-neutral-400 border-l-2 border-white pl-4"></p>
+
+      <article id="results" class="hidden mt-14 space-y-14"></article>
+
+      <details id="rawbox" class="hidden mt-16 border-t border-neutral-800 pt-10">
+        <summary class="cursor-pointer text-xs uppercase tracking-widest text-neutral-500 hover:text-neutral-300">
+          Raw JSON
+        </summary>
+        <pre
+          id="raw"
+          class="mt-4 text-[11px] font-mono text-neutral-500 overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap break-all"
+        ></pre>
+      </details>
+    </div>
 
     <script src="/dashboard/main.js"></script>
-    <script>
-      lucide.createIcons();
-    </script>
   </body>
 </html>

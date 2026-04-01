@@ -1,9 +1,5 @@
 /**
- * Lupin Logic OSINT Dashboard
- * API: POST /api/investigate/<user> → poll GET /api/status/<job_id>
- *
- * If you use Live Server (e.g. :5500), set meta lupin-api-origin or LUPIN_API_BASE to your API (default :8080).
- * Override anytime: <script>window.LUPIN_API_BASE='http://127.0.0.1:8000'</script> before main.js
+ * Minimal B&W dashboard — POST /api/investigate → GET /api/status
  */
 (function () {
   function resolveApiBase() {
@@ -13,440 +9,318 @@
     const staticPorts = ["5500", "5501", "3000", "4173", "5173"];
     const port = window.location.port;
     if (window.location.protocol === "file:") {
-      const meta = document.querySelector('meta[name="lupin-api-origin"]');
-      const m = meta && meta.content && meta.content.trim();
-      return (m || "http://127.0.0.1:8080").replace(/\/$/, "");
+      const m = document.querySelector('meta[name="lupin-api-origin"]');
+      return ((m && m.content.trim()) || "http://127.0.0.1:8080").replace(/\/$/, "");
     }
     if (port && staticPorts.includes(port)) {
-      const meta = document.querySelector('meta[name="lupin-api-origin"]');
-      const m = meta && meta.content && meta.content.trim();
-      if (m) return m.replace(/\/$/, "");
+      const m = document.querySelector('meta[name="lupin-api-origin"]');
+      if (m && m.content.trim()) return m.content.trim().replace(/\/$/, "");
       return `http://${window.location.hostname}:8080`.replace(/\/$/, "");
     }
     return window.location.origin.replace(/\/$/, "");
   }
 
   const API_BASE = resolveApiBase();
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  const JSON_POST_HEADERS = {
-    Accept: "application/json",
-    "Content-Type": "application/json",
-  };
-
-  /**
-   * Parse API JSON; if the server returned HTML (SPA fallback, 404 page, wrong port), fail clearly.
-   */
-  async function readJsonResponse(res, urlLabel) {
+  async function readJsonResponse(res, label) {
     const text = await res.text();
-    const trimmed = text.trim();
-    if (!trimmed) {
-      throw new Error(`Empty response from ${urlLabel} (HTTP ${res.status})`);
-    }
-    if (trimmed[0] === "<") {
+    const t = text.trim();
+    if (!t) throw new Error(`Empty response (${label}) HTTP ${res.status}`);
+    if (t[0] === "<")
       throw new Error(
-        `Got HTML instead of JSON from ${urlLabel}. Either Flask is not running on this port, or another app ` +
-          `(e.g. Live Server) is bound to the same port and is returning index.html. ` +
-          `API base: ${API_BASE}. Confirm with: curl -s -H "Accept: application/json" -X POST ${API_BASE}/api/investigate/test ` +
-          `(expect JSON with job_id). The dashboard uses /api/investigate and /api/status only.`
+        `HTML from ${label} — API may be wrong host. Using ${API_BASE}. Try: curl -X POST ${API_BASE}/api/investigate/test -H "Accept: application/json" -d "{}"`
       );
-    }
     try {
       return JSON.parse(text);
     } catch (e) {
-      throw new Error(
-        `Invalid JSON from ${urlLabel} (HTTP ${res.status}): ${(e && e.message) || e}`
-      );
+      throw new Error(`Bad JSON (${label}): ${e.message}`);
     }
   }
 
-  const $ = (sel, root = document) => root.querySelector(sel);
-  const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+  const $ = (id) => document.getElementById(id);
+  const form = $("form");
+  const q = $("q");
+  const btn = $("btn");
+  const loading = $("loading");
+  const err = $("err");
+  const results = $("results");
+  const rawbox = $("rawbox");
+  const raw = $("raw");
 
-  const els = {
-    form: $("#scan-form"),
-    input: $("#username-input"),
-    scanBtn: $("#scan-btn"),
-    loading: $("#loading-overlay"),
-    loadingStatus: $("#loading-status"),
-    empty: $("#empty-state"),
-    results: $("#results"),
-    errorBanner: $("#error-banner"),
-    avatarImg: $("#avatar-img"),
-    avatarPh: $("#avatar-placeholder"),
-    nickname: $("#profile-nickname"),
-    handle: $("#profile-handle"),
-    numeric: $("#profile-numeric"),
-    integrity: $("#integrity-badge"),
-    region: $("#profile-region"),
-    lang: $("#profile-lang"),
-    catalog: $("#profile-status"),
-    infraDc: $("#infra-dc"),
-    infraAnchor: $("#infra-anchor"),
-    infraMeta: $("#infra-meta"),
-    intelBio: $("#intel-bio"),
-    socialLeads: $("#social-leads"),
-    polDeduction: $("#pol-deduction"),
-    clockContainer: $("#clock-container"),
-    clockRuler: $("#clock-ruler"),
-    secretDrawer: $("#secret-drawer"),
-    secretToggle: $("#secret-toggle"),
-    secretChevron: $("#secret-chevron"),
-    rawToggle: $("#raw-toggle"),
-    rawPanel: $("#raw-panel"),
-    rawJson: $("#raw-json"),
-    rawChevron: $("#raw-chevron"),
-  };
-
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-  function refreshIcons() {
-    if (window.lucide && typeof lucide.createIcons === "function") {
-      lucide.createIcons();
-    }
-  }
-
-  function showLoading(show, statusText) {
-    els.loading.classList.toggle("hidden", !show);
-    if (statusText) els.loadingStatus.textContent = statusText;
-    els.scanBtn.disabled = show;
-    els.input.disabled = show;
-  }
-
-  function integrityClass(text) {
-    const t = (text || "").toLowerCase();
-    if (t.includes("automation") || t.includes("bot")) {
-      return {
-        cls: "bg-red-500/15 text-red-300 border border-red-500/30",
-        label: "Automation risk",
-        icon: "bot",
-      };
-    }
-    if (t.includes("human") || t.includes("typical provisioning")) {
-      return {
-        cls: "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30",
-        label: "Human (typical)",
-        icon: "user-check",
-      };
-    }
-    if (t.includes("parked") || t.includes("aged")) {
-      return {
-        cls: "bg-amber-500/15 text-amber-200 border border-amber-500/30",
-        label: "Aged / parked",
-        icon: "archive",
-      };
-    }
-    return {
-      cls: "bg-zinc-500/15 text-zinc-300 border border-zinc-500/25",
-      label: text || "Unknown",
-      icon: "help-circle",
-    };
-  }
-
-  function platformIcon(platform) {
-    const p = (platform || "").toLowerCase();
-    if (p.includes("instagram")) return "camera";
-    if (p === "x" || p.includes("twitter")) return "at-sign";
-    if (p.includes("youtube")) return "play-circle";
-    if (p.includes("pinterest")) return "pin";
-    if (p.includes("github")) return "github";
-    return "link";
-  }
-
-  function statusTone(status) {
-    const s = (status || "").toLowerCase();
-    if (s === "found")
-      return "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20";
-    if (s === "not found") return "border-red-500/30 bg-red-950/30 text-red-300/90 hover:bg-red-950/50";
-    return "border-slate-600 bg-slate-800/60 text-zinc-300 hover:bg-slate-800";
-  }
-
-  function renderClock(pol) {
-    const ac = (pol && pol.activity_clock) || {};
-    const hist = ac.utc_hour_histogram;
-    const face = ac.clock_face || "";
-
-    els.polDeduction.textContent = ac.deduction || "—";
-    els.clockRuler.textContent = ac.clock_ruler || "";
-
-    let html = "";
-
-    if (Array.isArray(hist) && hist.length === 24) {
-      const max = Math.max(1, ...hist);
-      html += `<div class="flex items-end justify-between gap-0.5 h-24 px-1">`;
-      hist.forEach((n, h) => {
-        const pct = Math.max(4, (n / max) * 100);
-        const active = n > 0;
-        html += `<div class="flex-1 flex flex-col items-center gap-1 min-w-0">
-          <div class="w-full rounded-t bg-slate-800 relative h-20 flex items-end overflow-hidden">
-            <div class="w-full rounded-t transition-all ${
-              active ? "bg-gradient-to-t from-emerald-600 to-emerald-400" : "bg-slate-700/40"
-            }" style="height:${pct}%"></div>
-          </div>
-          <span class="text-[9px] font-mono text-zinc-600">${h % 6 === 0 ? h : ""}</span>
-        </div>`;
-      });
-      html += `</div>`;
-    }
-
-    if (face && face.length >= 24) {
-      html += `<div class="rounded-lg border border-slate-700 bg-slate-950/80 p-3 font-mono text-xs tracking-wider text-emerald-500/90 break-all">${escapeHtml(
-        face
-      )}</div>`;
-      html += `<p class="text-[10px] text-zinc-500">Digits 0–9 = events in that UTC hour (capped at 9). <code class="text-zinc-600">.</code> = none.</p>`;
-    }
-
-    if (!html) {
-      html = `<p class="text-xs text-zinc-500">No UTC activity histogram for this target.</p>`;
-    }
-
-    els.clockContainer.innerHTML = html;
-  }
-
-  function renderSecretStats(secret) {
-    const keys = [
-      ["downloadSetting", "downloadSetting_decoded"],
-      ["commentSetting", "commentSetting_decoded"],
-      ["duetSetting", "duetSetting_decoded"],
-      ["stitchSetting", "stitchSetting_decoded"],
-      ["is_stem_verified", null],
-      ["video_label", null],
-    ];
-    const rows = [];
-    for (const [k, decKey] of keys) {
-      if (secret[k] === undefined || secret[k] === null) continue;
-      const decoded = decKey ? secret[decKey] : null;
-      const label = k.replace(/_/g, " ");
-      const valStr = String(secret[k]);
-      const decStr = decoded != null ? String(decoded) : "";
-      const restrictive =
-        /off|disabled|nobody|none|0|false/i.test(decStr) || /off|disabled/i.test(valStr);
-      const permissive =
-        /everyone|all|on|enabled|1|true/i.test(decStr) || /everyone|all/i.test(valStr);
-      let tone = "text-zinc-300 border-slate-600 bg-slate-800/50";
-      let icon = "toggle-left";
-      if (permissive && !restrictive) {
-        tone = "text-emerald-300 border-emerald-500/30 bg-emerald-500/10";
-        icon = "unlock";
-      } else if (restrictive) {
-        tone = "text-amber-200 border-amber-500/25 bg-amber-500/10";
-        icon = "lock";
-      }
-      rows.push(`<div class="rounded-lg border px-3 py-2.5 flex items-start gap-3 ${tone}">
-        <i data-lucide="${icon}" class="h-4 w-4 shrink-0 mt-0.5 opacity-80"></i>
-        <div class="min-w-0">
-          <p class="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold">${escapeHtml(label)}</p>
-          <p class="text-sm font-mono text-white/90">${escapeHtml(valStr)}</p>
-          ${
-            decStr
-              ? `<p class="text-xs text-zinc-400 mt-1">${escapeHtml(decStr)}</p>`
-              : ""
-          }
-        </div>
-      </div>`);
-    }
-    if (secret.ai_tags_present) {
-      rows.push(`<div class="rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2.5 flex items-center gap-2">
-        <i data-lucide="sparkles" class="h-4 w-4 text-violet-300"></i>
-        <span class="text-sm text-violet-200">AI / content tags detected</span>
-      </div>`);
-    }
-    els.secretDrawer.innerHTML =
-      rows.length > 0
-        ? rows.join("")
-        : `<p class="text-xs text-zinc-500 col-span-full">No secret stats captured for this profile.</p>`;
-    refreshIcons();
-  }
-
-  function escapeHtml(s) {
+  function esc(s) {
+    if (s == null || s === "") return "—";
     const d = document.createElement("div");
-    d.textContent = s;
+    d.textContent = String(s);
     return d.innerHTML;
   }
 
-  function renderReport(data, httpStatus) {
-    els.errorBanner.classList.add("hidden");
-    els.results.classList.remove("hidden");
-    els.empty.classList.add("hidden");
+  function section(title, inner) {
+    return `<section>
+      <h2 class="text-[10px] uppercase tracking-[0.25em] text-neutral-500 mb-4">${esc(title)}</h2>
+      ${inner}
+    </section>`;
+  }
 
+  function dl(rows) {
+    return `<dl class="space-y-3 text-sm">
+      ${rows
+        .map(
+          ([k, v]) =>
+            `<div class="flex flex-col sm:flex-row sm:gap-4 border-b border-neutral-900 pb-3">
+            <dt class="text-neutral-500 font-mono text-xs w-40 shrink-0">${esc(k)}</dt>
+            <dd class="text-neutral-200 font-mono text-xs break-all">${v}</dd>
+          </div>`
+        )
+        .join("")}
+    </dl>`;
+  }
+
+  function renderReport(data, httpStatus) {
     const missing = data.status === "missing" || httpStatus === 404;
     if (missing) {
-      els.errorBanner.textContent =
-        data.error || "Account not found or could not be resolved.";
-      els.errorBanner.classList.remove("hidden");
+      results.innerHTML = section("Result", `<p class="text-neutral-400 text-sm">${esc(data.error || "Not found")}</p>`);
+      raw.textContent = JSON.stringify(data, null, 2);
+      rawbox.classList.remove("hidden");
+      return;
     }
 
     const id = data.identity || {};
-    const infra = data.infrastructure || {};
+    const acc = data.account || {};
+    const st = data.stats || {};
+    const inf = data.infrastructure || {};
     const intel = data.intelligence || {};
     const pol = data.pattern_of_life || {};
-    const stats = data.stats || {};
-    const secret = data.secret_stats || {};
+    const sec = data.secret_stats || {};
     const ev = data.evidence || {};
 
-    const avatarUrl = ev.avatar_url || intel.avatar_url || "";
-    if (avatarUrl) {
-      els.avatarImg.src = avatarUrl;
-      els.avatarImg.classList.remove("hidden");
-      els.avatarPh.classList.add("hidden");
-      els.avatarImg.onerror = () => {
-        els.avatarImg.classList.add("hidden");
-        els.avatarPh.classList.remove("hidden");
-      };
+    const avatarSrc = ev.avatar_url || intel.avatar_url || "";
+    const avatarBlock = avatarSrc
+      ? `<img src="${esc(avatarSrc)}" alt="" class="w-16 h-16 rounded-full object-cover border border-neutral-700 grayscale" />`
+      : `<div class="w-16 h-16 rounded-full border border-neutral-700 bg-neutral-900"></div>`;
+
+    const integ = id.integrity_assessment || "—";
+    const summary = (data.forensic_summary || []).join(" · ") || "—";
+
+    const statGrid = [
+      ["Followers", st.followers],
+      ["Following", st.following],
+      ["Likes", st.likes],
+      ["Videos (profile)", st.videos_on_profile],
+      ["Friends", st.friends],
+      ["Diggs (total)", st.diggs_total],
+      ["Catalog", st.content_status],
+      ...(st.content_status === "Public" && st.engagement_ratio != null
+        ? [["Engagement", st.engagement_ratio]]
+        : []),
+    ];
+
+    const hero = `<div class="flex gap-6 items-start">
+      ${avatarBlock}
+      <div class="min-w-0 flex-1">
+        <p class="font-mono text-lg text-white">@${esc(id.unique_id || data.username_requested)}</p>
+        <p class="text-neutral-300 mt-1">${esc(id.nickname)}</p>
+        <p class="text-xs text-neutral-500 mt-3 leading-relaxed">${esc(summary)}</p>
+        <p class="text-xs text-neutral-600 mt-2 font-mono">Integrity: ${esc(integ)}</p>
+      </div>
+    </div>`;
+
+    const statsHtml = `<div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+      ${statGrid
+        .map(
+          ([k, v]) =>
+            `<div><p class="text-[10px] uppercase tracking-wider text-neutral-600">${esc(k)}</p>
+            <p class="font-mono text-sm mt-1 text-white">${esc(v)}</p></div>`
+        )
+        .join("")}
+    </div>`;
+
+    const link = (u, label) =>
+      u
+        ? `<a class="underline text-neutral-300 hover:text-white" href="${esc(u)}" target="_blank" rel="noopener">${esc(
+            label || u
+          )}</a>`
+        : "—";
+    const accBlock = `<dl class="space-y-3 text-sm">
+      <div class="flex flex-col sm:flex-row sm:gap-4 border-b border-neutral-900 pb-3">
+        <dt class="text-neutral-500 font-mono text-xs w-40 shrink-0">Profile URL</dt>
+        <dd class="text-xs">${link(acc.profile_url, acc.profile_url)}</dd>
+      </div>
+      <div class="flex flex-col sm:flex-row sm:gap-4 border-b border-neutral-900 pb-3">
+        <dt class="text-neutral-500 font-mono text-xs w-40 shrink-0">Verified</dt>
+        <dd class="font-mono text-xs text-neutral-200">${esc(acc.verified)}</dd>
+      </div>
+      <div class="flex flex-col sm:flex-row sm:gap-4 border-b border-neutral-900 pb-3">
+        <dt class="text-neutral-500 font-mono text-xs w-40 shrink-0">Private</dt>
+        <dd class="font-mono text-xs text-neutral-200">${esc(acc.private_account)}</dd>
+      </div>
+      <div class="flex flex-col sm:flex-row sm:gap-4 border-b border-neutral-900 pb-3">
+        <dt class="text-neutral-500 font-mono text-xs w-40 shrink-0">Bio link</dt>
+        <dd class="text-xs">${link(intel.bio_link_url || acc.bio_link_url, intel.bio_link_url || acc.bio_link_url)}</dd>
+      </div>
+      <div class="flex flex-col sm:flex-row sm:gap-4 border-b border-neutral-900 pb-3">
+        <dt class="text-neutral-500 font-mono text-xs w-40 shrink-0">Following visibility</dt>
+        <dd class="font-mono text-xs text-neutral-200">${esc(acc.following_visibility)}</dd>
+      </div>
+      <div class="flex flex-col sm:flex-row sm:gap-4 border-b border-neutral-900 pb-3">
+        <dt class="text-neutral-500 font-mono text-xs w-40 shrink-0">FTC / Org</dt>
+        <dd class="font-mono text-xs text-neutral-200">${esc(acc.ftc)} / ${esc(acc.is_organization)}</dd>
+      </div>
+    </dl>`;
+
+    const idRows = [
+      ["Numeric ID", id.numeric_id],
+      ["SecUid", id.sec_uid],
+      ["Slot reserved (UTC)", id.slot_reserved_utc],
+      ["Profile created (UTC)", id.profile_finalized_utc],
+      ["Last profile update", id.last_profile_update_utc],
+      ["Region", id.registered_region],
+      ["Language", id.primary_language],
+    ];
+
+    const infraRows = [
+      ["Physical DC", inf.physical_datacenter],
+      ["Server anchor", inf.server_anchor],
+      ["IDC", inf.idc_code],
+      ["Flags", [inf.region_spoofing_flag, inf.network_anomaly].filter(Boolean).join(" · ") || "—"],
+    ];
+
+    let secretRows = [];
+    for (const k of Object.keys(sec)) {
+      if (k.endsWith("_decoded")) continue;
+      const dec = sec[k + "_decoded"];
+      const val = sec[k];
+      if (val === undefined || val === null) continue;
+      const d = dec != null ? `${val} — ${dec}` : String(val);
+      secretRows.push([k, d]);
+    }
+    if (sec.ai_tags_present) secretRows.push(["ai_tags_present", "true"]);
+
+    const ac = pol.activity_clock || {};
+    const hist = ac.utc_hour_histogram;
+    let clockHtml = "";
+    if (Array.isArray(hist) && hist.length === 24) {
+      const mx = Math.max(1, ...hist);
+      clockHtml = `<div class="flex items-end gap-0.5 h-16 mt-2">
+        ${hist
+          .map((n) => {
+            const h = Math.max(2, (n / mx) * 100);
+            const bg = n > 0 ? "background:#fff" : "background:#404040";
+            const op = n > 0 ? 1 : 0.35;
+            return `<div class="flex-1 rounded-sm" style="height:${h}%;${bg};opacity:${op}"></div>`;
+          })
+          .join("")}
+      </div><p class="text-[10px] text-neutral-600 mt-2 font-mono">UTC 0–23 · ${esc(ac.deduction || "")}</p>`;
     } else {
-      els.avatarImg.classList.add("hidden");
-      els.avatarPh.classList.remove("hidden");
+      clockHtml = `<p class="text-xs text-neutral-600 font-mono">${esc(ac.clock_face || "No histogram")}</p>`;
     }
 
-    els.nickname.textContent = id.nickname || "—";
-    els.handle.textContent = "@" + (id.unique_id || data.username_requested || "—");
-    els.numeric.textContent = "Numeric ID " + (id.numeric_id ?? "—");
-
-    const integ = integrityClass(id.integrity_assessment);
-    els.integrity.className =
-      "mt-4 inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold " + integ.cls;
-    els.integrity.innerHTML = `<i data-lucide="${integ.icon}" class="h-3.5 w-3.5"></i><span>${escapeHtml(
-      integ.label
-    )}</span>`;
-
-    els.region.textContent = id.registered_region || "—";
-    els.lang.textContent = id.primary_language || "—";
-    els.catalog.textContent = stats.content_status || pol.content_status || "—";
-
-    els.infraDc.textContent = infra.physical_datacenter || "—";
-    els.infraAnchor.textContent = infra.server_anchor || "—";
-    const metaBits = [];
-    if (infra.idc_code) metaBits.push("IDC: " + infra.idc_code);
-    if (infra.region_spoofing_flag) metaBits.push(infra.region_spoofing_flag);
-    if (infra.network_anomaly) metaBits.push(infra.network_anomaly);
-    els.infraMeta.textContent = metaBits.length ? metaBits.join(" • ") : "—";
-
-    els.intelBio.textContent = intel.bio || "—";
-
     const leads = intel.social_leads || [];
-    els.socialLeads.innerHTML = leads.length
-      ? leads
-          .map((L) => {
-            const ic = platformIcon(L.platform);
-            const tone = statusTone(L.status);
-            const href = L.url || "#";
-            const safe = escapeHtml(href);
-            return `<a href="${safe}" target="_blank" rel="noopener noreferrer"
-            class="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${tone}">
-            <i data-lucide="${ic}" class="h-3.5 w-3.5 shrink-0"></i>
-            <span>${escapeHtml(L.platform || "Link")}</span>
-            <span class="text-zinc-500 font-mono">${escapeHtml(L.status || "")}</span>
-          </a>`;
-          })
-          .join("")
-      : `<p class="text-xs text-zinc-500">No social leads from pivot probes.</p>`;
+    const leadHtml = leads.length
+      ? `<ul class="space-y-2">
+        ${leads
+          .map(
+            (L) =>
+              `<li><a class="text-sm font-mono underline text-neutral-300 hover:text-white" href="${esc(L.url)}" target="_blank" rel="noopener">${esc(L.platform)}</a> <span class="text-neutral-600 text-xs">${esc(L.status)}</span></li>`
+          )
+          .join("")}
+      </ul>`
+      : `<p class="text-xs text-neutral-600">No pivot hits.</p>`;
 
-    renderClock(pol);
-    renderSecretStats(secret);
+    const bio = intel.bio ? `<p class="text-sm text-neutral-400 leading-relaxed whitespace-pre-wrap">${esc(intel.bio)}</p>` : "";
 
-    els.rawJson.textContent = JSON.stringify(data, null, 2);
-    refreshIcons();
-  }
+    let extra = "";
+    const disc = intel.discovered_interactions || [];
+    if (disc.length)
+      extra += section(
+        "Discovered interactions",
+        `<ul class="text-xs font-mono text-neutral-500 space-y-1">${disc.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`
+      );
+    const mesh = intel.associate_mesh || [];
+    if (mesh.length)
+      extra += section(
+        "Associate mesh",
+        `<ul class="text-xs text-neutral-400 space-y-2">${mesh.map((m) => `<li>@${esc(m.video_author)}: ${esc((m.shared_social_leads || []).join(", "))}</li>`).join("")}</ul>`
+      );
 
-  function absoluteApiUrl(path) {
-    if (path.startsWith("http://") || path.startsWith("https://")) return path;
-    return `${API_BASE}${path.startsWith("/") ? path : "/" + path}`;
+    results.innerHTML = [
+      section("Overview", hero),
+      section("Counts", statsHtml),
+      section("Account flags", accBlock),
+      section("Identity", dl(idRows)),
+      section("Infrastructure", dl(infraRows)),
+      section("Bio", bio || `<p class="text-neutral-600 text-sm">—</p>`),
+      section("Social leads", leadHtml),
+      section("Pattern of life", clockHtml),
+      secretRows.length ? section("Secret stats", dl(secretRows.map(([k, v]) => [k, v]))) : "",
+      extra,
+    ]
+      .filter(Boolean)
+      .join("");
+
+    raw.textContent = JSON.stringify(data, null, 2);
+    rawbox.classList.remove("hidden");
   }
 
   async function pollJob(jobId, pollPath) {
     const url = pollPath
-      ? absoluteApiUrl(pollPath)
+      ? (pollPath.startsWith("http") ? pollPath : `${API_BASE}${pollPath.startsWith("/") ? "" : "/"}${pollPath}`)
       : `${API_BASE}/api/status/${encodeURIComponent(jobId)}`;
-    const maxAttempts = 200;
-    for (let n = 0; n < maxAttempts; n++) {
+    for (let i = 0; i < 200; i++) {
       const r = await fetch(url, { headers: { Accept: "application/json" } });
-      const body = await readJsonResponse(r, `/api/status/${jobId.slice(0, 8)}…`);
-      if (body.status === "queued") {
-        els.loadingStatus.textContent = "Queued…";
-      } else if (body.status === "processing") {
-        els.loadingStatus.textContent = "Decrypting metadata • Playwright + pivots";
-      } else if (body.status === "completed") {
-        return { body };
-      } else if (body.status === "failed") {
-        throw new Error(body.error || "Job failed");
-      }
-      await sleep(1200);
+      const body = await readJsonResponse(r, "status");
+      if (body.status === "completed") return body;
+      if (body.status === "failed") throw new Error(body.error || "Failed");
+      await sleep(1000);
     }
-    throw new Error("Polling timed out — increase LUPIN_INVESTIGATE_TIMEOUT or retry.");
+    throw new Error("Timed out waiting for results.");
   }
 
   async function runScan(username) {
-    const u = username.trim().replace(/^@+/, "");
+    const u = username.trim().replace(/^@+/g, "");
     if (!u) return;
-
-    showLoading(true, "Submitting target…");
-    els.empty.classList.add("hidden");
-    els.results.classList.add("hidden");
+    err.classList.add("hidden");
+    results.classList.add("hidden");
+    rawbox.classList.add("hidden");
+    loading.classList.remove("hidden");
+    btn.disabled = true;
+    q.disabled = true;
 
     try {
       const res = await fetch(`${API_BASE}/api/investigate/${encodeURIComponent(u)}`, {
         method: "POST",
-        headers: JSON_POST_HEADERS,
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
         body: "{}",
       });
-      const start = await readJsonResponse(res, `POST /api/investigate/${u}`);
-      if (!res.ok) {
-        throw new Error(start.error || `HTTP ${res.status}`);
-      }
+      const start = await readJsonResponse(res, "investigate");
+      if (!res.ok) throw new Error(start.error || `HTTP ${res.status}`);
       const jobId = start.job_id;
-      if (!jobId) throw new Error("No job_id returned");
-
-      els.loadingStatus.textContent = "Job " + jobId.slice(0, 8) + "…";
-
-      const { body } = await pollJob(jobId, start.poll_url);
-      showLoading(false);
-
+      if (!jobId) throw new Error("No job_id");
+      const body = await pollJob(jobId, start.poll_url);
       const result = body.result;
-      if (!result) {
-        throw new Error(body.parse_error || "Empty result");
-      }
+      if (!result) throw new Error(body.parse_error || "Empty result");
+      results.classList.remove("hidden");
       renderReport(result, body.http_status);
-    } catch (err) {
-      showLoading(false);
-      els.empty.classList.add("hidden");
-      els.results.classList.remove("hidden");
-      els.errorBanner.textContent = err.message || String(err);
-      els.errorBanner.classList.remove("hidden");
-      refreshIcons();
+    } catch (e) {
+      err.textContent = e.message || String(e);
+      err.classList.remove("hidden");
+    } finally {
+      loading.classList.add("hidden");
+      btn.disabled = false;
+      q.disabled = false;
     }
   }
 
-  els.form.addEventListener("submit", (e) => {
+  form.addEventListener("submit", (e) => {
     e.preventDefault();
-    runScan(els.input.value);
+    runScan(q.value);
   });
 
-  let secretOpen = false;
-  els.secretToggle.addEventListener("click", () => {
-    secretOpen = !secretOpen;
-    els.secretDrawer.classList.toggle("hidden", !secretOpen);
-    els.secretChevron.setAttribute("data-lucide", secretOpen ? "chevron-up" : "chevron-down");
-    els.secretToggle.querySelector("span").textContent = secretOpen ? "Collapse" : "Expand";
-    refreshIcons();
-  });
-
-  let rawOpen = false;
-  els.rawToggle.addEventListener("click", () => {
-    rawOpen = !rawOpen;
-    els.rawPanel.classList.toggle("hidden", !rawOpen);
-    els.rawChevron.setAttribute("data-lucide", rawOpen ? "chevron-up" : "chevron-down");
-    refreshIcons();
-  });
-
-  refreshIcons();
-
-  // Opened from GET /investigate/<user> → redirect to /?target=<user>
   const qs = new URLSearchParams(window.location.search);
   const preset = qs.get("target") || qs.get("user");
   if (preset) {
-    els.input.value = preset;
-    if (window.history.replaceState) {
-      window.history.replaceState({}, "", window.location.pathname || "/");
-    }
+    q.value = preset;
+    if (window.history.replaceState) window.history.replaceState({}, "", window.location.pathname || "/");
     runScan(preset);
   }
 })();

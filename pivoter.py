@@ -79,7 +79,7 @@ async def sherlock_search(
             uniq.insert(0, ig)
 
     limits = httpx.Limits(max_keepalive_connections=10, max_connections=20)
-    timeout = httpx.Timeout(10.0, connect=10.0)
+    timeout = httpx.Timeout(6.0, connect=5.0)
     results: Dict[str, List[LeadResult]] = {u: [] for u in uniq}
     github_usernames = set(github_usernames or [])
     deep_link_usernames = set(deep_link_usernames or [])
@@ -121,7 +121,7 @@ async def download_high_res_avatar(avatar_url: str, evidence_dir: Path, filename
         )
     }
 
-    timeout = httpx.Timeout(20.0, connect=10.0)
+    timeout = httpx.Timeout(12.0, connect=6.0)
     async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
         r = await client.get(avatar_url, headers=headers)
         r.raise_for_status()
