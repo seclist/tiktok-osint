@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -123,6 +124,266 @@ def compute_opsec_hardness_score(account_details: Dict[str, Any], secret: Dict[s
         score += 9
 
     return max(0, min(100, score))
+
+
+def social_circle_status_from_following_visibility(following_visibility: Any) -> Optional[str]:
+    """TikTok followingVisibility: 2 → mutuals-only following list (best-effort)."""
+    fv = _coerce_int(following_visibility)
+    if fv == 2:
+        return "Mutuals Only (Vetted)"
+    return None
+
+
+def compute_archival_forensic_note(likes: Any, videos_count: Any) -> Tuple[Optional[str], Optional[float]]:
+    """
+    High like-to-video ratio on a non-empty catalog suggests archived / aggregated engagement.
+    """
+    v = _coerce_int(videos_count)
+    lk = _coerce_int(likes)
+    if v is None or lk is None or v <= 0:
+        return None, None
+    ratio = lk / float(v)
+    if ratio > 3_000:
+        return (
+            "Suspected Content Archiving: High Like-to-Video Discrepancy",
+            round(ratio, 2),
+        )
+    return None, round(ratio, 2) if ratio else None
+
+
+def _collect_shard_hints(avatar_url: Any, idc_code: Optional[Any]) -> str:
+    parts: List[str] = []
+    if idc_code is not None:
+        parts.append(str(idc_code).lower())
+    if isinstance(avatar_url, str):
+        lu = avatar_url.lower()
+        parts.append(lu)
+        m = re.search(r"tos-([a-z0-9]+)", lu)
+        if m:
+            parts.append(m.group(1))
+    return " ".join(parts)
+
+
+# Registered region (TikTok profile) → coarse geography for CDN mismatch checks.
+_REG_AMERICAS = frozenset(
+    {
+        "US",
+        "CA",
+        "MX",
+        "BR",
+        "AR",
+        "CL",
+        "CO",
+        "PE",
+        "VE",
+        "EC",
+        "GT",
+        "CR",
+        "PA",
+        "PR",
+        "DO",
+        "HN",
+        "SV",
+        "NI",
+        "BO",
+        "PY",
+        "UY",
+        "JM",
+        "TT",
+        "BS",
+    }
+)
+_REG_EUROPE = frozenset(
+    {
+        "GB",
+        "FR",
+        "DE",
+        "ES",
+        "IT",
+        "NL",
+        "BE",
+        "IE",
+        "PT",
+        "AT",
+        "CH",
+        "SE",
+        "NO",
+        "DK",
+        "FI",
+        "PL",
+        "CZ",
+        "GR",
+        "RO",
+        "HU",
+        "BG",
+        "HR",
+        "SK",
+        "SI",
+        "LT",
+        "LV",
+        "EE",
+        "LU",
+        "MT",
+        "CY",
+        "IS",
+        "RS",
+        "UA",
+        "BY",
+        "MD",
+        "AL",
+        "MK",
+        "BA",
+        "ME",
+        "XK",
+    }
+)
+_REG_APAC = frozenset(
+    {
+        "AU",
+        "NZ",
+        "JP",
+        "KR",
+        "SG",
+        "MY",
+        "TH",
+        "VN",
+        "PH",
+        "ID",
+        "IN",
+        "BD",
+        "PK",
+        "LK",
+        "NP",
+        "KH",
+        "MM",
+        "TW",
+        "HK",
+        "MO",
+        "MN",
+        "FJ",
+        "BN",
+    }
+)
+_REG_MENA = frozenset(
+    {
+        "AE",
+        "SA",
+        "EG",
+        "QA",
+        "KW",
+        "BH",
+        "OM",
+        "JO",
+        "LB",
+        "IQ",
+        "YE",
+        "SY",
+        "IL",
+        "PS",
+        "MA",
+        "DZ",
+        "TN",
+        "LY",
+        "SD",
+        "SO",
+        "DJ",
+        "MR",
+        "SN",
+        "NG",
+        "ZA",
+        "KE",
+        "GH",
+        "TZ",
+        "UG",
+        "ZW",
+        "BW",
+        "NA",
+        "ZM",
+        "MW",
+        "MZ",
+        "AO",
+        "ET",
+        "RW",
+    }
+)
+
+
+def _registered_region_bucket(code: Optional[str]) -> Optional[str]:
+    if not code or str(code).strip().upper() in {"", "(UNKNOWN)"}:
+        return None
+    c = str(code).strip().upper()
+    if len(c) != 2:
+        return None
+    if c in _REG_AMERICAS:
+        return "americas"
+    if c in _REG_EUROPE:
+        return "europe"
+    if c in _REG_APAC:
+        return "apac"
+    if c in _REG_MENA:
+        return "mena"
+    return None
+
+
+def _cdn_node_zone(hints: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Returns (optional human node label, coarse zone for mismatch checks).
+    Zone: americas | europe | apac | None
+    """
+    h = hints.lower()
+    if "maliva" in h:
+        return "Asia-Pacific (Malaysia) Node", "apac"
+    if any(x in h for x in ("useast2a", "useast5", "useast2", "useast1", "tos-useast")):
+        return None, "americas"
+    if "usw2" in h:
+        return None, "americas"
+    if "no1a" in h or "tos-no1a" in h:
+        return None, "europe"
+    if "alisg" in h or "tos-alisg" in h or "idc=sg" in h or "tos-sg" in h:
+        return None, "apac"
+    return None, None
+
+
+def _cdn_zone_compatible_with_region(cdn_zone: str, reg_bucket: Optional[str]) -> bool:
+    if reg_bucket is None:
+        return True
+    if cdn_zone == reg_bucket:
+        return True
+    if cdn_zone == "apac" and reg_bucket == "mena":
+        return True
+    return False
+
+
+def compute_cdn_journey(
+    avatar_url: Any, idc_code: Optional[str], registered_region: str
+) -> Dict[str, Optional[str]]:
+    hints = _collect_shard_hints(avatar_url, idc_code)
+    node_label, zone = _cdn_node_zone(hints)
+    routing: Optional[str] = None
+    reg_b = _registered_region_bucket(
+        registered_region if registered_region and registered_region != "(unknown)" else None
+    )
+    if zone and reg_b is not None and not _cdn_zone_compatible_with_region(zone, reg_b):
+        routing = "Routing Anomaly: Possible VPN/Proxy Fingerprint"
+    return {
+        "node_label": node_label,
+        "routing_anomaly": routing,
+    }
+
+
+def compute_rapid_growth_anomaly(
+    heart_count: Any, created: str, *, now: Optional[datetime] = None
+) -> Optional[str]:
+    """High absolute likes on a young account — distinct from likes-per-day viral rate."""
+    now = now or datetime.now(timezone.utc)
+    likes = _coerce_int(heart_count)
+    c = _parse_report_dt(created)
+    if likes is None or c is None or likes <= 10_000:
+        return None
+    age_days = (now - c).total_seconds() / 86400.0
+    if age_days >= 90:
+        return None
+    return "Aged Persona / Rapid Growth Anomaly"
 
 
 def compute_velocity_interpretation(
@@ -298,6 +559,16 @@ def build_forensic_report(
     opsec_hardness_score = compute_opsec_hardness_score(account_details, secret_d)
     likes_per_day, velocity_badge = compute_velocity_interpretation(heart_count, created)
 
+    social_circle_status = social_circle_status_from_following_visibility(
+        account_details.get("following_visibility")
+    )
+    videos_prof_ct = stats_v2.get("videoCount") or stats_v2_raw.get("videoCount")
+    archival_forensic_note, likes_per_video_ratio = compute_archival_forensic_note(
+        heart_count, videos_prof_ct
+    )
+    cdn_journey = compute_cdn_journey(avatar, profile.get("idc_code"), registered_region)
+    rapid_growth_anomaly = compute_rapid_growth_anomaly(heart_count, created)
+
     discovered: List[str] = []
     for v in tagged:
         url = v.get("url")
@@ -332,7 +603,20 @@ def build_forensic_report(
     summary_bits.extend(integrity_v2_flags)
     if velocity_badge:
         summary_bits.append(velocity_badge)
-    if (integrity_v2_flags or velocity_badge) and _no_hit in summary_bits:
+    if archival_forensic_note:
+        summary_bits.append(archival_forensic_note)
+    if cdn_journey.get("routing_anomaly"):
+        summary_bits.append(str(cdn_journey["routing_anomaly"]))
+    if rapid_growth_anomaly:
+        summary_bits.append(rapid_growth_anomaly)
+    _interp_hits = bool(
+        integrity_v2_flags
+        or velocity_badge
+        or archival_forensic_note
+        or cdn_journey.get("routing_anomaly")
+        or rapid_growth_anomaly
+    )
+    if _interp_hits and _no_hit in summary_bits:
         summary_bits = [x for x in summary_bits if x != _no_hit]
 
     stats_block: Dict[str, Any] = {
@@ -357,6 +641,7 @@ def build_forensic_report(
         "private_account": account_details.get("private_account"),
         "bio_link_url": account_details.get("bio_link_url"),
         "following_visibility": account_details.get("following_visibility"),
+        "social_circle_status": social_circle_status,
         "ftc": account_details.get("ftc"),
         "is_organization": account_details.get("is_organization"),
         "show_favorite": account_details.get("show_favorite"),
@@ -396,6 +681,10 @@ def build_forensic_report(
         "physical_datacenter": physical_dc,
         "region_spoofing_flag": region_flag or None,
         "network_anomaly": net_anomaly or None,
+        "cdn_journey": {
+            "node_label": cdn_journey.get("node_label"),
+            "routing_anomaly": cdn_journey.get("routing_anomaly"),
+        },
     }
 
     intelligence = {
@@ -441,6 +730,12 @@ def build_forensic_report(
         "opsec_hardness_score": opsec_hardness_score,
         "likes_per_day": likes_per_day,
         "velocity_badge": velocity_badge,
+        "social_circle_status": social_circle_status,
+        "archival_forensic_note": archival_forensic_note,
+        "likes_per_video_ratio": likes_per_video_ratio,
+        "cdn_node_label": cdn_journey.get("node_label"),
+        "cdn_routing_anomaly": cdn_journey.get("routing_anomaly"),
+        "rapid_growth_anomaly": rapid_growth_anomaly,
     }
 
     return {
@@ -485,6 +780,8 @@ def format_report_text(report: Dict[str, Any], *, verify: bool = False, verify_m
             f"Bio link: {acc.get('bio_link_url') or intel.get('bio_link_url') or ''}",
         ]
     )
+    if acc.get("social_circle_status"):
+        lines.append(f"Social circle: {acc['social_circle_status']}")
     lines.extend(
         [
             "",
@@ -508,6 +805,13 @@ def format_report_text(report: Dict[str, Any], *, verify: bool = False, verify_m
         lines.extend(["", pdc.strip()])
     if infra.get("network_anomaly"):
         lines.extend(["", str(infra["network_anomaly"])])
+    cj = infra.get("cdn_journey") or {}
+    if isinstance(cj, dict) and (cj.get("node_label") or cj.get("routing_anomaly")):
+        lines.extend(["", "CDN journey"])
+        if cj.get("node_label"):
+            lines.append(f"Node: {cj['node_label']}")
+        if cj.get("routing_anomaly"):
+            lines.append(str(cj["routing_anomaly"]))
 
     socials = intel.get("social_leads") or []
     socials_str = " | ".join(f"{s.get('platform')}: {s.get('url')} ({s.get('status')})" for s in socials)
@@ -532,7 +836,17 @@ def format_report_text(report: Dict[str, Any], *, verify: bool = False, verify_m
     interp = report.get("intelligence_interpretation") or {}
     if any(
         interp.get(k) is not None
-        for k in ("opsec_hardness_score", "likes_per_day", "velocity_badge")
+        for k in (
+            "opsec_hardness_score",
+            "likes_per_day",
+            "velocity_badge",
+            "social_circle_status",
+            "archival_forensic_note",
+            "likes_per_video_ratio",
+            "cdn_node_label",
+            "cdn_routing_anomaly",
+            "rapid_growth_anomaly",
+        )
     ):
         lines.extend(["", "Intelligence interpretation"])
         if interp.get("opsec_hardness_score") is not None:
@@ -541,6 +855,18 @@ def format_report_text(report: Dict[str, Any], *, verify: bool = False, verify_m
             lines.append(f"Likes/day (since created): {interp['likes_per_day']}")
         if interp.get("velocity_badge"):
             lines.append(str(interp["velocity_badge"]))
+        if interp.get("social_circle_status"):
+            lines.append(f"Social circle: {interp['social_circle_status']}")
+        if interp.get("likes_per_video_ratio") is not None:
+            lines.append(f"Likes/video (profile counter): {interp['likes_per_video_ratio']}")
+        if interp.get("archival_forensic_note"):
+            lines.append(str(interp["archival_forensic_note"]))
+        if interp.get("cdn_node_label"):
+            lines.append(f"CDN node: {interp['cdn_node_label']}")
+        if interp.get("cdn_routing_anomaly"):
+            lines.append(str(interp["cdn_routing_anomaly"]))
+        if interp.get("rapid_growth_anomaly"):
+            lines.append(str(interp["rapid_growth_anomaly"]))
 
     assoc = intel.get("potential_associates") or []
     if assoc:

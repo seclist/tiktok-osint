@@ -171,6 +171,10 @@
         <dd class="font-mono text-xs text-neutral-200">${esc(acc.following_visibility)}</dd>
       </div>
       <div class="flex flex-col sm:flex-row sm:gap-4 border-b border-neutral-900 pb-3">
+        <dt class="text-neutral-500 font-mono text-xs w-40 shrink-0">Social circle</dt>
+        <dd class="font-mono text-xs text-neutral-200">${esc(acc.social_circle_status || "—")}</dd>
+      </div>
+      <div class="flex flex-col sm:flex-row sm:gap-4 border-b border-neutral-900 pb-3">
         <dt class="text-neutral-500 font-mono text-xs w-40 shrink-0">FTC / Org</dt>
         <dd class="font-mono text-xs text-neutral-200">${esc(acc.ftc)} / ${esc(acc.is_organization)}</dd>
       </div>
@@ -186,10 +190,13 @@
       ["Language", id.primary_language],
     ];
 
+    const cj = inf.cdn_journey || {};
     const infraRows = [
       ["Physical DC", inf.physical_datacenter],
       ["Server anchor", inf.server_anchor],
       ["IDC", inf.idc_code],
+      ["CDN node", cj.node_label],
+      ["CDN routing", cj.routing_anomaly],
       ["Flags", [inf.region_spoofing_flag, inf.network_anomaly].filter(Boolean).join(" · ") || "—"],
     ];
 
@@ -227,6 +234,16 @@
 
     const bio = intel.bio ? `<p class="text-sm text-neutral-400 leading-relaxed whitespace-pre-wrap">${esc(intel.bio)}</p>` : "";
 
+    const forensicAlerts = [interp.archival_forensic_note, interp.cdn_routing_anomaly, interp.rapid_growth_anomaly].filter(
+      Boolean
+    );
+    const alertsHtml =
+      forensicAlerts.length > 0
+        ? `<ul class="mt-5 space-y-2 text-xs font-mono text-neutral-200 border-t border-neutral-900 pt-5">${forensicAlerts
+            .map((t) => `<li class="leading-relaxed border-l-2 border-white pl-3">${esc(t)}</li>`)
+            .join("")}</ul>`
+        : "";
+
     const interpGrid = `<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
       <div>
         <p class="text-[10px] uppercase tracking-wider text-neutral-600">OpSec hardness</p>
@@ -244,7 +261,21 @@
       interp.velocity_badge ? esc(interp.velocity_badge) : "—"
     }</p>
       </div>
-    </div>`;
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-5">
+      <div>
+        <p class="text-[10px] uppercase tracking-wider text-neutral-600">Social circle</p>
+        <p class="font-mono text-sm mt-1 text-neutral-200">${interp.social_circle_status ? esc(interp.social_circle_status) : "—"}</p>
+      </div>
+      <div>
+        <p class="text-[10px] uppercase tracking-wider text-neutral-600">Likes / video</p>
+        <p class="font-mono text-sm mt-1 text-neutral-200">${interp.likes_per_video_ratio != null ? esc(interp.likes_per_video_ratio) : "—"}</p>
+      </div>
+      <div>
+        <p class="text-[10px] uppercase tracking-wider text-neutral-600">CDN node</p>
+        <p class="font-mono text-sm mt-1 text-neutral-200">${interp.cdn_node_label ? esc(interp.cdn_node_label) : "—"}</p>
+      </div>
+    </div>${alertsHtml}`;
 
     let extra = "";
     const disc = intel.discovered_interactions || [];
