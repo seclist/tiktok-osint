@@ -1,0 +1,4 @@
+# One proxy per line. Examples (uncomment and edit to use):
+# http://proxy.example.com:8080
+# socks5://127.0.0.1:1080
+# http://user:password@proxy.example.com:3128

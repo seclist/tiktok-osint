@@ -1,0 +1,6 @@
+# Pin playwright to the driver bundled in mcr.microsoft.com/playwright/python:v1.40.0-jammy
+playwright==1.40.0
+httpx>=0.25.0
+flask>=3.0.0
+flask-cors>=4.0.0
+gunicorn>=21.2.0
