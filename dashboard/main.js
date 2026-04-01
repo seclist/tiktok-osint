@@ -90,6 +90,7 @@
     const st = data.stats || {};
     const inf = data.infrastructure || {};
     const intel = data.intelligence || {};
+    const interp = data.intelligence_interpretation || {};
     const pol = data.pattern_of_life || {};
     const sec = data.secret_stats || {};
     const ev = data.evidence || {};
@@ -122,6 +123,11 @@
         <p class="text-neutral-300 mt-1">${esc(id.nickname)}</p>
         <p class="text-xs text-neutral-500 mt-3 leading-relaxed">${esc(summary)}</p>
         <p class="text-xs text-neutral-600 mt-2 font-mono">Integrity: ${esc(integ)}</p>
+        ${
+          (id.integrity_v2_flags || []).length
+            ? `<p class="text-xs text-neutral-300 mt-2 font-mono">Integrity v2: ${esc((id.integrity_v2_flags || []).join(" · "))}</p>`
+            : ""
+        }
       </div>
     </div>`;
 
@@ -241,6 +247,11 @@
         <div class="relative h-4 mt-0.5">${ticks}</div>
         <p class="text-[10px] text-neutral-600 font-mono leading-relaxed">${esc(ac.deduction || "")}</p>
         ${
+          ac.geographic_suggestion
+            ? `<p class="text-[11px] text-neutral-300 mt-3 rounded border border-neutral-800 bg-neutral-950/80 px-3 py-2 font-mono leading-relaxed">${esc(ac.geographic_suggestion)}</p>`
+            : ""
+        }
+        ${
           ac.clock_face
             ? `<p class="text-[10px] text-neutral-500 font-mono mt-2 border-t border-neutral-900 pt-2">${esc(ac.clock_face)}</p>`
             : ""
@@ -273,6 +284,25 @@
 
     const bio = intel.bio ? `<p class="text-sm text-neutral-400 leading-relaxed whitespace-pre-wrap">${esc(intel.bio)}</p>` : "";
 
+    const interpGrid = `<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div>
+        <p class="text-[10px] uppercase tracking-wider text-neutral-600">OpSec hardness</p>
+        <p class="font-mono text-lg mt-1 text-white">${
+          interp.opsec_hardness_score != null ? esc(interp.opsec_hardness_score) : "—"
+        }<span class="text-neutral-500 text-sm"> / 100</span></p>
+      </div>
+      <div>
+        <p class="text-[10px] uppercase tracking-wider text-neutral-600">Likes / day</p>
+        <p class="font-mono text-sm mt-1 text-neutral-200">${interp.likes_per_day != null ? esc(interp.likes_per_day) : "—"}</p>
+      </div>
+      <div>
+        <p class="text-[10px] uppercase tracking-wider text-neutral-600">Velocity</p>
+        <p class="font-mono text-sm mt-1 ${interp.velocity_badge ? "text-white" : "text-neutral-500"}">${
+      interp.velocity_badge ? esc(interp.velocity_badge) : "—"
+    }</p>
+      </div>
+    </div>`;
+
     let extra = "";
     const disc = intel.discovered_interactions || [];
     if (disc.length)
@@ -292,6 +322,7 @@
       section("Counts", statsHtml),
       section("Account flags", accBlock),
       section("Identity", dl(idRows)),
+      section("Intelligence interpretation", interpGrid),
       section("Infrastructure", dl(infraRows)),
       section("Bio", bio || `<p class="text-neutral-600 text-sm">—</p>`),
       section("Social leads", leadHtml),

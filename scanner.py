@@ -1366,12 +1366,16 @@ class TikTokScanner:
         """
         Known TikTok CDN idc → public-ish datacenter labels (heuristic).
         """
+        if isinstance(avatar_url, str) and "tos-maliva" in avatar_url.lower():
+            return "Global Shard (Multi-Region)"
         idc_l = self._extract_avatar_idc(avatar_url)
         if idc_l == "no1a":
             return "Physical Data Center: Dublin, Ireland (TikTok Europe Core)"
-        if idc_l == "useast2a":
+        if idc_l in {"useast2a", "useast5"}:
             return "Physical Data Center: Virginia, USA"
         if isinstance(avatar_url, str) and "tos-useast2a" in avatar_url.lower():
+            return "Physical Data Center: Virginia, USA"
+        if isinstance(avatar_url, str) and "tos-useast5" in avatar_url.lower():
             return "Physical Data Center: Virginia, USA"
         return None
 
@@ -1393,6 +1397,7 @@ class TikTokScanner:
             "useast1": "North America (US-East shard)",
             "useast2a": "North America (US-East shard)",
             "useast2": "North America (US-East shard)",
+            "useast5": "Virginia, USA",
             "usw2": "North America (US-West shard)",
             "maliva": "Middle East/Africa (MENA shard)",
         }
@@ -1440,6 +1445,8 @@ class TikTokScanner:
                 "clock_face": "",
                 "clock_ruler": "00 .. 23 (UTC)",
                 "deduction": None,
+                "inferred_timezone_offset_hours": None,
+                "geographic_suggestion": None,
             }
 
         clock_face = "".join(str(min(9, hours[h])) if hours[h] else "." for h in range(24))
@@ -1451,12 +1458,19 @@ class TikTokScanner:
             inferred += 24
         sign = "+" if inferred >= 0 else ""
         deduction = f"Likely Timezone: UTC{sign}{inferred} based on active window"
+        geographic_suggestion = None
+        if inferred == 5:
+            geographic_suggestion = (
+                "Likely operating from Central Asia/Pakistan region (activity pattern consistent with UTC+5)."
+            )
 
         return {
             "utc_hour_histogram": hours,
             "clock_face": clock_face,
             "clock_ruler": "00 .. 23 (UTC) each digit = event count (capped at 9), '.' = none",
             "deduction": deduction,
+            "inferred_timezone_offset_hours": inferred,
+            "geographic_suggestion": geographic_suggestion,
         }
 
     async def _associate_mesh_probe_author_bio(
@@ -1590,6 +1604,8 @@ class TikTokScanner:
         mapping = {
             "useast2a": "US East (useast2a shard)",
             "useast2": "US East",
+            "useast5": "Virginia, USA",
+            "maliva": "Global Shard (Multi-Region)",
             "usw2": "US West",
             "sg": "Asia (SG)",
             "alisg": "Asia (SG)",

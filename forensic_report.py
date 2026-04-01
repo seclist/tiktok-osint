@@ -43,6 +43,108 @@ def scan_result_to_serializable(result: ScanResult) -> Dict[str, Any]:
     }
 
 
+def _parse_report_dt(s: Optional[str]) -> Optional[datetime]:
+    if not s or s == "(unknown)":
+        return None
+    try:
+        return datetime.strptime(s.strip(), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def _coerce_int(v: Any) -> Optional[int]:
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return int(v)
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+        return int(v.strip())
+    return None
+
+
+def compute_integrity_v2_flags(
+    created: str, last_profile_update: Optional[str], videos_on_profile: Any
+) -> List[str]:
+    """
+    Integrity v2: old account with sparse public catalog suggests a parked persona.
+    """
+    c = _parse_report_dt(created)
+    u = _parse_report_dt(last_profile_update) if last_profile_update else None
+    if not c or not u:
+        return []
+    if (u - c).total_seconds() <= 365 * 24 * 3600:
+        return []
+    v = _coerce_int(videos_on_profile)
+    if v is None or v >= 5:
+        return []
+    return ["Aged/Parked Persona"]
+
+
+def compute_opsec_hardness_score(account_details: Dict[str, Any], secret: Dict[str, Any]) -> int:
+    """
+    0–100 heuristic: higher = stricter privacy (harder passive OSINT).
+    Uses downloadSetting, commentSetting, following_visibility (profile + rehydration fallback).
+    """
+    dl = _coerce_int(account_details.get("download_setting_user"))
+    if dl is None:
+        dl = _coerce_int(secret.get("downloadSetting"))
+    cm = _coerce_int(account_details.get("comment_setting_user"))
+    if cm is None:
+        cm = _coerce_int(secret.get("commentSetting"))
+    fv = _coerce_int(account_details.get("following_visibility"))
+
+    score = 12
+    # downloadSetting: 0 = downloads enabled, 1 = disabled
+    if dl == 1:
+        score += 34
+    elif dl == 0:
+        score += 6
+    else:
+        score += 10
+
+    # commentSetting: 0 everyone, 1 friends, 3 off
+    if cm == 3:
+        score += 32
+    elif cm == 1:
+        score += 18
+    elif cm == 0:
+        score += 0
+    else:
+        score += 8
+
+    # followingVisibility: 1 public list; 2 friends; 3 only me (TikTok-style enums, best-effort)
+    if fv in {2, 3}:
+        score += 28
+    elif fv == 1:
+        score += 6
+    else:
+        score += 9
+
+    return max(0, min(100, score))
+
+
+def compute_velocity_interpretation(
+    heart_count: Any, created: str, *, now: Optional[datetime] = None
+) -> Tuple[Optional[float], Optional[str]]:
+    """
+    Likes per day since account creation. Badge when rate exceeds 10,000/day.
+    """
+    now = now or datetime.now(timezone.utc)
+    created_dt = _parse_report_dt(created)
+    likes = _coerce_int(heart_count)
+    if created_dt is None or likes is None:
+        return None, None
+    delta = now - created_dt
+    if delta.total_seconds() <= 0:
+        return None, None
+    days = max(delta.total_seconds() / 86400.0, 1.0 / 24.0)
+    lpd = likes / days
+    badge = "Viral Anomaly Detected" if lpd > 10_000 else None
+    return round(lpd, 2), badge
+
+
 def build_forensic_report(
     scanner: TikTokScanner,
     result: ScanResult,
@@ -172,6 +274,12 @@ def build_forensic_report(
     except Exception:
         integrity = "(unknown)"
 
+    integrity_v2_flags = compute_integrity_v2_flags(
+        created,
+        profile.get("last_profile_update"),
+        stats_v2.get("videoCount") or stats_v2_raw.get("videoCount"),
+    )
+
     ratio = pol.get("engagement_to_follower_ratio")
     engagement_ratio = ratio if ratio is not None else "(unknown)"
     follower_int = int(follower_count) if str(follower_count).isdigit() else None
@@ -186,6 +294,9 @@ def build_forensic_report(
     associates = shadow.get("potential_associates") or []
     associate_mesh = shadow.get("associate_mesh") or []
     secret = (result.extracted_metadata or {}).get("secret_stats") or {}
+    secret_d = secret if isinstance(secret, dict) else {}
+    opsec_hardness_score = compute_opsec_hardness_score(account_details, secret_d)
+    likes_per_day, velocity_badge = compute_velocity_interpretation(heart_count, created)
 
     discovered: List[str] = []
     for v in tagged:
@@ -225,8 +336,14 @@ def build_forensic_report(
             "associated with "
             + ", ".join([f"@{a.get('uniqueId')}" for a in associates if a.get("uniqueId")][:3])
         )
+    _no_hit = "No high-confidence anomalies detected"
     if not summary_bits:
-        summary_bits.append("No high-confidence anomalies detected")
+        summary_bits.append(_no_hit)
+    summary_bits.extend(integrity_v2_flags)
+    if velocity_badge:
+        summary_bits.append(velocity_badge)
+    if (integrity_v2_flags or velocity_badge) and _no_hit in summary_bits:
+        summary_bits = [x for x in summary_bits if x != _no_hit]
 
     stats_block: Dict[str, Any] = {
         "followers": follower_count,
@@ -279,6 +396,7 @@ def build_forensic_report(
         "registered_region": registered_region,
         "primary_language": primary_language,
         "integrity_assessment": integrity,
+        "integrity_v2_flags": integrity_v2_flags,
         "id_forensics": id_forensics,
     }
 
@@ -322,6 +440,8 @@ def build_forensic_report(
             "clock_face": activity_clock.get("clock_face"),
             "clock_ruler": activity_clock.get("clock_ruler"),
             "deduction": activity_clock.get("deduction"),
+            "inferred_timezone_offset_hours": activity_clock.get("inferred_timezone_offset_hours"),
+            "geographic_suggestion": activity_clock.get("geographic_suggestion"),
         },
         "shadow_tracker": {
             "tagged_videos": tagged,
@@ -340,6 +460,13 @@ def build_forensic_report(
         "avatar_base64": avatar_base64,
     }
 
+    intelligence_interpretation: Dict[str, Any] = {
+        "integrity_v2_flags": integrity_v2_flags,
+        "opsec_hardness_score": opsec_hardness_score,
+        "likes_per_day": likes_per_day,
+        "velocity_badge": velocity_badge,
+    }
+
     return {
         "status": "complete",
         "username_requested": result.username,
@@ -348,6 +475,7 @@ def build_forensic_report(
         "identity": identity,
         "infrastructure": infrastructure,
         "intelligence": intelligence,
+        "intelligence_interpretation": intelligence_interpretation,
         "secret_stats": secret_stats_out,
         "pattern_of_life": pattern_of_life,
         "stats": stats_block,
@@ -423,6 +551,22 @@ def format_report_text(report: Dict[str, Any], *, verify: bool = False, verify_m
     if socials_str:
         lines.extend(["", f"Socials: {socials_str}"])
     lines.extend(["", f"Integrity: {identity.get('integrity_assessment')}"])
+    v2flags = identity.get("integrity_v2_flags") or []
+    if v2flags:
+        lines.append("Integrity v2: " + "; ".join(str(x) for x in v2flags))
+
+    interp = report.get("intelligence_interpretation") or {}
+    if any(
+        interp.get(k) is not None
+        for k in ("opsec_hardness_score", "likes_per_day", "velocity_badge")
+    ):
+        lines.extend(["", "Intelligence interpretation"])
+        if interp.get("opsec_hardness_score") is not None:
+            lines.append(f"OpSec hardness: {interp['opsec_hardness_score']}/100")
+        if interp.get("likes_per_day") is not None:
+            lines.append(f"Likes/day (since created): {interp['likes_per_day']}")
+        if interp.get("velocity_badge"):
+            lines.append(str(interp["velocity_badge"]))
 
     assoc = intel.get("potential_associates") or []
     if assoc:
@@ -491,6 +635,8 @@ def format_report_text(report: Dict[str, Any], *, verify: bool = False, verify_m
         )
         if ac.get("deduction"):
             lines.extend(["", f"Deduction: {ac['deduction']}"])
+        if ac.get("geographic_suggestion"):
+            lines.extend(["", f"Geographic suggestion: {ac['geographic_suggestion']}"])
 
     disc = intel.get("discovered_interactions") or []
     ileads = intel.get("interaction_leads") or []
